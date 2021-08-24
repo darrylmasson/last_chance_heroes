@@ -11,12 +11,11 @@ def chance_to_hit_ranged(attacker, defender, moved=False):
     # TODO add range penalties
     return norm.sf(defense, loc=skill, scale=consistency)
 
-def chance_to_hit_melee(attacker, defender, charged=False):
+def chance_to_hit_melee(attacker, defender, charged=False, n_trials = 1000):
     a_consistency = attacker.melee_consistency
     a_skill = attacker.melee_skill + (0 if not charge else a_consistency)
     d_skill = defender.melee_skill
     d_consistency = defender.melee_consistency
-    n_trials = 100
     a = norm.rvs(loc=a_skill, scale=a_consistency, size=n_trials)
     d = norm.rvs(loc=d_skill, scale=d_consistency, size=n_trials)
     return (a > d).sum()/n_trials

@@ -120,11 +120,12 @@ class Battlefield(object):
     def adjacent(self, position: ty.Tuple[int,int]) -> set:
         return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
 
-    def straight_line(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int]) -> ty.Generator[ty.Tuple[int,int],None,None]:
+    def straight_line(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int], penetrating=False) -> ty.Generator[ty.Tuple[int,int],None,None]:
         """
         Generator for squares falling in a straight line
         :param start: (x,y) tuple, starting point
         :param end: (x,y) tuple, end point
+        :bool penetrating: ignore obstructions on exact corners
         :yields: squares along the line
         """
         current = start
@@ -145,6 +146,7 @@ class Battlefield(object):
                 current = (current[0], current[1]+dy)
             else:
                 # this means we hit the exact vertex between two squares
+                if 
                 current = (current[0]+dx, current[1]+dy)
             yield current
 
@@ -168,6 +170,34 @@ class Battlefield(object):
         # we only need to cross half
         obstruction -= self.cache[end].los_scale*self.dist_through_square(0, theta)*0.5
         return distance, obstruction
+
+    def evaluate_los(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int]) -> ty.Tuple[float, float]:
+        """
+        How clear of a shot do you have from start to end? Evaluates both outside corners as well as one inside corner.
+        If all three are obstructed then no bueno
+        :param start: (x,y) tuple, start position
+        :param end: (x,y) tuple, end position
+        :returns:
+        """
+        theta = atan2(end[1]-start[1], end[0]-start[0])
+        t = theta % (pi/4)
+        d1 = int(round(0.5*(cos(t)+sin(t)))*1000)
+        d2 = int(round(0.5*(cos(t)-sin(t)))*1000)
+        if d1 == d2:
+            # line is either vertical or horizontal
+            pass
+        else:
+            pass
+        return
+
+    def evaluate_line(self, start: ty.Tuple[float, float], end: ty.Tuple[float, float]) -> ty.Tuple[float, float]:
+        """
+        Evaluates LOS and obstruction along a line from one corner of one square to another corner of another
+        :param start: (x,y) tuple, start coordinates (not integers)
+        :param end: (x,y) tuple, end coordinates (not integers)
+        :returns: (float, float) tuple, integrated obstruction > 0, integrated obstruction < 0
+        """
+        pass
 
     @staticmethod
     def dist_to_line(pos: ty.Tuple[int,int], ref: ty.Tuple[int,int],
@@ -205,9 +235,8 @@ class Battlefield(object):
             B = abs(perp_dist/cos(theta))
             return perp_dist*tan(theta) + (1-B)/sin(theta)
         else:
-            j = 0.5-(perp_dist*cos(theta) - 0.5)*tan(pi/2-theta)
-            # TODO finish
-            return j * C
+            B = 0.5  # grid size
+            return (B*(sin(theta)+cos(theta)) - perp_dist)/(sin(theta)*cos(theta))
         return 0
 
     def determine_cover(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int]) -> float:
