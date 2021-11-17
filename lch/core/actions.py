@@ -4,7 +4,7 @@ from scipy.stats import norm
 
 dice_log = []
 
-def chance_to_hit_ranged(attacker, defender, moved=False):
+def chance_to_hit_ranged(attacker, defender, obstruction=0, moved=False):
     consistency = attacker.ranged_consistency
     skill = attacker.ranged_skill - (0 if not moved else consistency)
     defense = defender.dodge
@@ -30,8 +30,10 @@ def do_damage(attacker, defender, weapon):
         print('You is dead, son')
     return
 
-def ranged_combat_action(attacker, defender, moved=False):
+def ranged_combat_action(attacker, defender, obstruction=0, moved=False):
     print(f'{attacker} attacks {defender}')
+    if moved:
+        if attacker.ranged_weapon.category in ['heavy']:
     skill = attacker.ranged_skill - (0 if not moved else attacker.ranged_consistency)
     hit_roll = norm.rvs(loc=skill, scale=attacker.ranged_consistency)
     dice_log.append((skill, attacker.ranged_consistency, hit_roll))
@@ -81,8 +83,10 @@ class Action(object):
         self.model = model
         self.target = target
         self.move_destination = move_destination
+        for k in 'shootable_targets chargeable_targets can_shoot_back can_charge_back'.split():
+            setattr(self, k, kwargs.pop(k, 0))
         self.hit_prob = 0
-        self.avg_damage = 3 # TODO
+        self.avg_damage = 0
         self.target_health = 0 if target is None else target.health
         for k,v in kwargs.items():
             setattr(self, k, v)
@@ -92,30 +96,30 @@ class Action(object):
 
     def normalize(self):
         return tuple([
-            self.hit_prob,
-            self.avg_damage,
-            self.target_health,
-            self.hit_prob,
-            self.avg_damage,
             self.shootable_targets,
             self.chargeable_targets,
             self.can_shoot_back,
             self.can_charge_back,
-                ])
+            self.hit_prob,
+            self.avg_damage,
+            self.target_health,
+        ])
 
     def engage(self):
         raise NotImplementedError()
 
     def move_model(self):
         self.model.status = "activated"
+        if not isinstance(self.move_destination, tuple):
+            raise ValueError(f'Move dest must be a tuple, not a {type(self.move_destination)}')
         print(f'Moving {self.model} to {self.move_destination}')
         self.model.position = self.move_destination
 
-    def attack(self, attack_type, has_moved=False):
+    def attack(self, attack_type):
         if attack_type == 'ranged':
-            return ranged_combat_action(self.model, self.target)
+            return ranged_combat_action(self.model, self.target, isinstance(self, MoveAction))
         if attack_type == 'melee':
-            return melee_combat_action(self.model, self.target)
+            return melee_combat_action(self.model, self.target, isinstance(self, MoveAction))
         raise NotImplementedError()
 
 class NoAction(Action):
@@ -141,7 +145,9 @@ class MoveAction(Action):
 class ShootAction(Action):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.hit_prob = chance_to_hit_ranged(self.model, self.target, self.model.ranged_weapon.category)
+        if not hasattr(self, 'obstruction'):
+            self.obstruction = 0
+        self.hit_prob = chance_to_hit_ranged(self.model, self.target, self.obstruction, self.model.ranged_weapon.category, issubclass(self, MoveAction))
         self.avg_damage = self.model.ranged_weapon.avg_damage
 
     def engage(self):
@@ -150,28 +156,25 @@ class ShootAction(Action):
 class MeleeAction(Action):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.hit_prob = chance_to_hit_melee(self.model, self.target, self.model.melee_weapon.category)
+        self.hit_prob = chance_to_hit_melee(self.model, self.target, self.model.melee_weapon.category, issubclass(self, MoveAction))
         self.avg_damage = self.model.melee_weapon.avg_damage
 
     def engage(self):
         self.attack('melee')
 
-class SnapShotAction(Action):
+class SnapShotAction(MoveAction, ShootAction):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.hit_prob = chance_to_hit_ranged(self.model, self.target, self.model.ranged_weapon.category, True)
-        self.avg_damage = self.model.ranged_weapon.avg_damage
 
     def engage(self):
         self.move_model()
         self.attack('ranged', True)
 
-class ChargeAction(Action):
+class ChargeAction(MoveAction, MeleeAction):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.hit_prob = chance_to_hit_melee(self.model, self.target, self.model.melee_weapon.category, True)
-        self.avg_damage = self.model.melee_weapon.avg_damage
 
     def engage(self):
         self.move_model()
         self.attack('melee', True)
+

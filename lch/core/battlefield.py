@@ -64,7 +64,7 @@ class Battlefield(object):
                 self.cache[(x,y)] = Location(x, y, *terrain_func(x,y))
 
         # now, make it into a graph
-        adjacent = [ # CCW from +x
+        _adjacent = [ # CCW from +x
                 (1,0),
                 (1,1),
                 (0,1),
@@ -78,7 +78,7 @@ class Battlefield(object):
         for (x,y),this_sq in self.cache.items():
             if this_sq is None:
                 continue
-            for adj, (dx, dy) in enumerate(adjacent):
+            for adj, (dx, dy) in enumerate(_adjacent):
                 if (x+dx,y+dy) in this_sq.move_cost:
                     # this direction already linked
                     continue
@@ -106,8 +106,9 @@ class Battlefield(object):
                 continue
             x,y = this_sq.position
             for direction in range(0,8,2):
-                x1, y1 = x+adjacent[direction][0], y+adjacent[direction][1]
-                x2, y2 = x+adjacent[(direction+2)%8][0], y+adjacent[(direction+2)%8][1]
+                x1, y1 = x+_adjacent[direction][0], y+_adjacent[direction][1]
+                direction = (direction+2)%8
+                x2, y2 = x+_adjacent[direction][0], y+_adjacent[direction][1]
                 if ((sq1 := self.cache.get((x1,y1))) is not None and 
                         (sq2 := self.cache.get((x2, y2))) is not None):
                     sq1.move_cost[(x2, y2)] = -1
@@ -117,8 +118,27 @@ class Battlefield(object):
         if self.logger is not None:
             self.logger.entry(level, message)
 
-    def adjacent(self, position: ty.Tuple[int,int]) -> set:
-        return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
+    def get_json(self):
+        d = {
+                'size': list(self.size()),
+                'nonzero': [
+                    dict(x=x,y=y,m=s['move_scale'],v=s['los_scale'])
+                    for (x,y), s in self.cache.items()
+                    ],
+                'team1': self.team1.get_dict(),
+                'team2': self.team2.get_dict()
+                }
+        return json.dumps(d)
+
+    def adjacent(self, position: ty.Union[ty.Tuple[int,int], list]) -> set:
+        if isinstance(position, tuple):
+            return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
+        elif isinstance(position, list):
+            ret = set()
+            for pos in position:
+                ret = ret | self.adjacent(pos)
+            return ret - set(position)
+        raise ValueError(f'Invalid position: {type(position)}, must be list or tuple')
 
     def straight_line(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int], penetrating=False) -> ty.Generator[ty.Tuple[int,int],None,None]:
         """
@@ -137,8 +157,8 @@ class Battlefield(object):
 
         while current != end:
             # evaluate potential next squares
-            A = dist_to_line((current[0]+dx, current[1]))
-            B = dist_to_line((current[0], current[1]+dy))
+            A = self.dist_to_line((current[0]+dx, current[1]), start, theta)
+            B = self.dist_to_line((current[0], current[1]+dy), start, theta)
 
             if A < B:
                 current = (current[0]+dx, current[1])
@@ -146,7 +166,7 @@ class Battlefield(object):
                 current = (current[0], current[1]+dy)
             else:
                 # this means we hit the exact vertex between two squares
-                if 
+                # TODO double-blockers
                 current = (current[0]+dx, current[1]+dy)
             yield current
 
@@ -164,11 +184,14 @@ class Battlefield(object):
             return distance, self.cache[start].los_cost[end]
         obstruction = self.cache[start].los_scale*self.dist_through_square(0, theta)*0.5
         for square in self.straight_line(start, end):
-            dist = dist_to_line(square, start, theta)
-            obstruction += self.dist_through_square(dist, theta)*self.cache[current].los_scale
+            #dist = dist_to_line(square, start, theta)
+            #obstruction += self.dist_through_square(dist, theta)*self.cache[current].los_scale
+            # TODO walk before run
+            obstruction += self.cache[current].los_scale
         # we add too much in the previous step for the last square because
         # we only need to cross half
-        obstruction -= self.cache[end].los_scale*self.dist_through_square(0, theta)*0.5
+        # TODO walk before run
+        #obstruction -= self.cache[end].los_scale*self.dist_through_square(0, theta)*0.5
         return distance, obstruction
 
     def evaluate_los(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int]) -> ty.Tuple[float, float]:
@@ -201,7 +224,7 @@ class Battlefield(object):
 
     @staticmethod
     def dist_to_line(pos: ty.Tuple[int,int], ref: ty.Tuple[int,int],
-                     theta: float, scale=1000) -> float:
+                     theta: float, scale=1000) -> int:
         """
         The perpendicular distance between a point and a line, quantized
         to so we avoid floating-point issues later

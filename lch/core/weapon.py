@@ -49,7 +49,43 @@ class RangedWeapon(Weapon):
     def chance_to_hit(self, target, bf):
         dist, obstruction = bf.los_range(self.owner.position, target.position)
         range_increments = dist // self.range
+        if hasattr(self, 'move_penalty'):
+            pass
+
+class Pistol(RangedWeapon):
+    def __init__(self):
+        kwargs = {
+                'range': 4,
+                'punch': 0,
+                'move_penalty': 0
+                }
+        super().__init__(name='pistol', **kwargs)
+
+class SMG(RangedWeapon):
     pass
 
-NoRangedWeapon = Weapon("None", -1, 0, 0)
+class Rifle(RangedWeapon):
+    pass
+
+class MG(RangedWeapon):
+    pass
+
+class Sniper(RangedWeapon):
+    pass
+
+class Rocket(RangedWeapon):
+    pass
+
+class Knife(MeleeWeapon):
+    pass
+
+class Sword(MeleeWeapon):
+    pass
+
+class Axe(MeleeWeapon):
+    pass
+
+weapon_cache = dict(
+    NoRangedWeapon = RangedWeapon(name="None", range=-1, attacks=0)
+)
 
