@@ -1,39 +1,106 @@
 import lch
 import numpy as np
 
+__all__ = 'SimpleAI'.split()
 
-class AI(object):
+class SimpleAI(object):
     """
     """
-    def __init__(self, deterministic=True, top_n=None):
-        N = 9
-        # action has shape (N,1)
-        #self.action_dtype = f'{N}f8'
-        self.action_fields = N
-        # hidden controls has shape (nodes, N)
-        nodes = 12
-        self.hidden_controls = np.random.random(size=(nodes, N))
-        self.hidden_bias = np.random.random(size=nodes)
+    action_fields = 8 # len(lch.NoAction().normalize())
 
-        # output controls has shape (1, nodes)
-        self.output_controls = np.random.random(size=(1, nodes))
-        self.output_bias = np.random.random(size=1)
+    def __init__(self,
+            hidden_controls=None, hidden_bias=None,
+            output_controls=None, output_bias=None,
+            top_n=None):
+        self.hidden_controls = hidden_controls
+        self.hidden_bias = hidden_bias
 
-        self.deterministic = deterministic
+        self.output_controls = output_controls
+        self.output_bias = output_bias
+
         self.top_n = top_n
+        self.dtype = [
+                ('n_actions', np.float32),
+                ('shootable_targets', np.float32),
+                ('chargeable_targets', np.float32),
+                ('can_shoot_back', np.float32),
+                ('can_charge_back', np.float32),
+                ('chance_to_hit', np.float32),
+                ('average_damage', np.float32),
+                ('target_health', np.float32)
+                ]
+
+    def load_from_file(self, fn):
+        def load(f):
+            self.hidden_controls = ff['hidden_controls']
+            self.hidden_bias = ff['hidden_bias']
+            self.output_controls = ff['output_controls']
+            self.output_bias = ff['output_bias']
+
+        if isinstance(fn, str):
+            with open(fn, 'rb') as f:
+                ff = np.load(f)
+                load(ff)
+        else:
+            with np.load(fn) as ff:
+                load(ff)
 
     def normalize_input(self, actions):
-        normed = np.zeros((len(actions), self.action_fields), dtype=np.float32)
+        normed = np.zeros((len(actions), len(self.dtype)))
         for i,a in enumerate(actions):
             normed[i] = a.normalize()
+
+        # number of possible actions
+        normed[:, 0] = np.log(len(normed))
+
+        # shootable targets
+        m = normed[:, 1] != 0
+        normed[m, 1] = np.log(normed[m, 1])
+        normed[~m, 1] = -1
+
+        # chargeable targets
+        m = normed[:, 2] != 0
+        normed[m, 2] = np.log(normed[m, 2])
+        normed[~m, 2] = -1
+
+        # can shoot back
+        m = normed[:, 3] != 0
+        normed[m, 3] = np.log(normed[m, 3])
+        normed[~m, 3] = -1
+
+        # can charge back
+        m = normed[:, 4] != 0
+        normed[m, 4] = np.log(normed[m, 4])
+        normed[~m, 4] = -1
+
+        # hit prob
+        # already in [0,1), no normalization necessary
+
+        # avg damage
+        m = normed[:, 6] != 0
+        normed[m, 6] = np.log(normed[m, 6])
+        normed[~m, 6] = 0
+
+        # target health
+        m = normed[:, 7] != 0
+        normed[m, 7] = np.log(normed[m, 7])
+        normed[~m, 7] = 0
+
         return normed
 
+    @staticmethod
+    def rectified_linear(arr):
+        return np.maximum(arr, 0, out=arr)
+
+    @staticmethod
+    def logistic_sigmoid(arr):
+        return 1/(1+np.exp(-arr))
+
     def activation_function_hidden(self, weighted_sum):
-        # start with rectivied linear for now
-        return np.maximum(weighted_sum, np.zeros_like(weighted_sum))
+        return self.rectified_linear(weighted_sum)
 
     def activation_function_output(self, weighted_sum):
-        return np.maximum(weighted_sum, np.zeros_like(weighted_sum))
+        return self.rectified_linear(weighted_sum)
 
     def select_action(self, actions):
         """
@@ -43,21 +110,27 @@ class AI(object):
         normed = self.normalize_input(actions)
         prob = np.zeros(len(normed))
         for i,a in enumerate(normed):
-            hidden = np.matmul(self.hidden_controls, a) + self.hidden_bias
+            #print('a', a.shape)
+            #print('hc', self.hidden_controls.shape)
+            hidden = (self.hidden_controls @ a.reshape((8,1,))) + self.hidden_bias
+            #print('hb', self.hidden_bias.shape)
             hidden = self.activation_function_hidden(hidden)
+            #print('h', hidden.shape)
 
-            output = np.matmul(self.output_controls, hidden) + self.output_bias
+            output = (self.output_controls @ hidden) + self.output_bias
+            #print('oc', self.output_controls.shape)
             output = self.activation_function_output(output)
-            prob[i] = output[0]
-            print(f'{actions[i]}: {output}')
+            #print('o', output.shape)
+            prob[i] = output
+            #print(f'{actions[i]}: {output}')
 
-        if self.deterministic:
+        if self.top_n is None:
             best_i = np.argmax(prob)
         else:
-            if self.top_n != 0:
-                top = np.argsort(prob)[-self.top_n:]
-                prob[~top] = 0
-            best_i = np.random.choice(len(prob), p=prob/prob.sum())
+            n = max(self.top_n, len(prob))
+            top = np.argsort(prob)[-n:]
+            p = prob[top]
+            best_i = np.random.choice(n, p=p/p.sum())
 
         return actions[best_i]
 

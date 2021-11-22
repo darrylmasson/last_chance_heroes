@@ -12,10 +12,10 @@ class Model(object):
         self.melee_consistency = melee_consistency
         self.health = health
         self.current_health = current_health or health
-        self.melee_weapon = lch.weapon_cache[melee_weapon]
-        self.ranged_weapon = lch.weapon_cache[ranged_weapon]
+        self.melee_weapon = melee_weapon
+        self.ranged_weapon = ranged_weapon
         self.dodge = dodge
-        self.position = (pos_x, pos_y
+        self.position = (pos_x, pos_y)
         self.status = 'ready'
         self.name = name
         self.armor = armor
@@ -28,7 +28,7 @@ class Model(object):
         return self.name == rhs.name
 
     def possible_actions(self, allies, enemies, bf):
-        print(f'Making actions for {self}')
+        #print(f'Making actions for {self}')
         if self.status != 'ready':
             return []
         enemy_locations = enemies.locations()
@@ -41,24 +41,25 @@ class Model(object):
         if self.position in enemy_adjacent:
             for enemy in enemies:
                 if self.position in bf.adjacent(enemy.position):
-                    actions.append(lch.MeleeAction(self, enemy, **action_kwargs))
+                    actions.append(lch.MeleeAction(model=self, target=enemy, **action_kwargs))
             return actions
 
         # second, shoot without moving
-        if self.ranged_weapon is not NoRangedWeapon:
+        if self.ranged_weapon is not lch.NoRangedWeapon:
             for e in enemies:
                 dist, obs = bf.los_range(self.position, e.position)
                 if dist < self.ranged_weapon.range:
-                    actions.append(lch.ShootAction(self, e, obs, **action_kwargs))
+                    actions.append(lch.ShootAction(model=self, target=e, obstruction=obs, **action_kwargs))
 
         # move and handle actions
         for pos in bf.reachable(self.position, self.movement):
             if pos in occupied:
                 continue
             action_kwargs = self.evaluate_position(pos, enemies, bf)
-            # TODO some caching of evaluate_position would be useful here
             if pos in enemy_adjacent:
-                actions.append(lch.ChargeAction(model=self, target=enemy, move_destination=pos, **action_kwargs))
+                for enemy in enemies:
+                    if enemy.position == pos:
+                        actions.append(lch.ChargeAction(model=self, target=enemy, move_destination=pos, **action_kwargs))
             else:
                 actions.append(lch.MoveAction(model=self, target=None, move_destination=pos, **action_kwargs))
                 if self.ranged_weapon is not lch.NoRangedWeapon:
@@ -80,7 +81,7 @@ class Model(object):
         """
         ret = {'shootable_targets': 0, 'chargeable_targets': 0,
                 'can_shoot_back': 0, 'can_charge_back': 0}
-        position = postion or self.position
+        position = position or self.position
         for enemy in enemies:
             los_dist, obstruction = bf.los_range(position, enemy.position)
             if self.ranged_weapon.range >= los_dist:

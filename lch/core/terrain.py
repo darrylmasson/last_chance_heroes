@@ -1,6 +1,6 @@
 import random
 
-__all__ = 'empty_bf forest'.split()
+__all__ = 'empty_bf Forest forest'.split()
 
 def empty_bf(*args):
     return (1,0)
@@ -12,7 +12,8 @@ class Forest(object):
 
     @classmethod
     def init(cls):
-        cls.num_trees = random.randint(low=10, high=20)
+        cls.num_trees = random.randint(10, 20)
+        cls.tree_locations = []
         while len(cls.tree_locations) <= cls.num_trees:
             x,y = random.randint(1, 23), random.randint(1, 15)
             if (x,y) in cls.tree_locations:

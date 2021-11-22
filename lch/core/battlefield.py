@@ -118,7 +118,7 @@ class Battlefield(object):
         if self.logger is not None:
             self.logger.entry(level, message)
 
-    def get_json(self):
+    def get_json(self) -> str:
         d = {
                 'size': list(self.size()),
                 'nonzero': [
@@ -133,7 +133,7 @@ class Battlefield(object):
     def adjacent(self, position: ty.Union[ty.Tuple[int,int], list]) -> set:
         if isinstance(position, tuple):
             return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
-        elif isinstance(position, list):
+        elif isinstance(position, (list, set)):
             ret = set()
             for pos in position:
                 ret = ret | self.adjacent(pos)
@@ -182,12 +182,13 @@ class Battlefield(object):
         if end in self.cache[start].los_cost:
             # squares are adjacent
             return distance, self.cache[start].los_cost[end]
+        theta = atan2(end[1]-start[1], end[0]-start[0])
         obstruction = self.cache[start].los_scale*self.dist_through_square(0, theta)*0.5
         for square in self.straight_line(start, end):
             #dist = dist_to_line(square, start, theta)
             #obstruction += self.dist_through_square(dist, theta)*self.cache[current].los_scale
             # TODO walk before run
-            obstruction += self.cache[current].los_scale
+            obstruction += self.cache[square].los_scale
         # we add too much in the previous step for the last square because
         # we only need to cross half
         # TODO walk before run
@@ -298,18 +299,17 @@ class Battlefield(object):
         while not frontier.empty:
             if (current := frontier.get()) == end:
                 break
-            self.log('trace', f'Current: {current} | {cost_so_far[current]:.1f}')
+            #self.log('trace', f'Current: {current} | {cost_so_far[current]:.1f}')
             for _next, differential_cost in self.cache[current].move_cost.items():
                 if differential_cost == -1:
                     continue
-                _next = _next.position
                 new_cost = came_from[current][1] + differential_cost
-                self.log('trace', f'Evaluating {_next}: {cost:.1f} {new_cost:.1f}')
+                #self.log('trace', f'Evaluating {_next}: {cost:.1f} {new_cost:.1f}')
                 if ((max_distance is None or new_cost <= max_distance) and
                         (_next not in came_from or new_cost < came_from[_next][1])):
                     priority = heuristic(end, _next) + new_cost
                     frontier.put(_next, priority)
-                    self.log('trace', f'Putting {_next} at {priority:.1f}')
+                    #self.log('trace', f'Putting {_next} at {priority:.1f}')
                     came_from[_next] = (current, new_cost)
         if end not in came_from:
             # didn't make it
@@ -321,7 +321,7 @@ class Battlefield(object):
             current = came_from[current][0]
         path.append(start)
         path.reverse()
-        return path, cost_so_far[end]
+        return path, came_from[end][1]
 
     def reachable(self,
             start: ty.Tuple[int,int],
@@ -340,15 +340,13 @@ class Battlefield(object):
         while not frontier.empty:
             current = frontier.get()
             yield current
-            alread_seen.add(current)
+            already_seen.add(current)
             for _next, differential_cost in self.cache[current].move_cost.items():
-                if _next.position in already_seen or differential_cost == -1:
+                if _next in already_seen or differential_cost == -1:
                     continue
-                _next = _next.position
-                new_cost = cost_so_far[current] + differential_cost
+                new_cost = came_from[current][1] + differential_cost
                 if (new_cost < max_distance and 
                         (_next not in came_from or new_cost < came_from[_next][1])):
-                    cost_so_far[_next] = new_cost
                     frontier.put(_next, new_cost)
-                    came_from[_next] = current
+                    came_from[_next] = (current, new_cost)
 

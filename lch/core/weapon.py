@@ -1,6 +1,8 @@
 import lch
 import typing as ty
+import random
 
+__all__ = 'Weapon MeleeWeapon RangedWeapon NoRangedWeapon'.split()
 
 class Weapon(object):
     """
@@ -10,7 +12,7 @@ class Weapon(object):
         self.attacks = attacks
         self.punch = punch
         self.category = category
-        self.damage = (min_damage, max_damage)
+        self._damage = (min_damage, max_damage)
         self.owner = owner
 
     def __str__(self):
@@ -21,10 +23,10 @@ class Weapon(object):
 
     @property
     def avg_damage(self):
-        return 0.5*sum(self.damage)
+        return 0.5*sum(self._damage)
 
     def damage(self):
-        return random.randint(*self.damage)
+        return random.randint(*self._damage)
 
     def chance_to_hit(self, target, bf):
         raise NotImplementedError()
@@ -85,7 +87,5 @@ class Sword(MeleeWeapon):
 class Axe(MeleeWeapon):
     pass
 
-weapon_cache = dict(
-    NoRangedWeapon = RangedWeapon(name="None", range=-1, attacks=0)
-)
+NoRangedWeapon = RangedWeapon(name="None", range=-1, attacks=0)
 

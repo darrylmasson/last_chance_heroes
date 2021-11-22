@@ -5,12 +5,12 @@ import copy
 class Team(object):
     """
     """
-    def __init__(self, models):
+    def __init__(self, models, ai=None):
         self.models = [copy.copy(m) for m in models]
-        self.AI = lch.AI()
+        self.AI = ai
         for m in self.models:
             m.team = self
-        print('This team consists of:', self.models)
+        #print('This team consists of:', self.models)
 
     def ready_up(self):
         for model in self.models:
@@ -22,6 +22,10 @@ class Team(object):
             if model.status != 'dead':
                 return False
         return True
+
+    def strength(self):
+        # how many HP are left
+        return sum(m.current_health for m in self.models)
 
     def locations(self, exclude=None, include_dead=False):
         ret = []
