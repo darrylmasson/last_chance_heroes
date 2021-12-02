@@ -27,7 +27,6 @@ class Game(object):
     def determine_victory(self, turn_i):
         if turn_i >= self.max_turns or self.teams[0].is_dead() or self.teams[1].is_dead():
             # game has ended, who won?
-            self.winning_team = np.argmax([t.strength() for t in self.teams]) + 1
             return True
         return False
 
@@ -59,4 +58,7 @@ class Game(object):
             self.end_of_turn(i)
             if self.determine_victory(i):
                 break
+        if self.teams[0].strength() > self.teams[1].strength():
+            return (self.teams[0].AI.name, self.teams[1].AI.name)
+        return (self.teams[1].AI.name, self.teams[0].AI.name)
 

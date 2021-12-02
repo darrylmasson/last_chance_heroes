@@ -11,7 +11,7 @@ class SimpleAI(object):
     def __init__(self,
             hidden_controls=None, hidden_bias=None,
             output_controls=None, output_bias=None,
-            top_n=None):
+            top_n=None, name=None):
         self.hidden_controls = hidden_controls
         self.hidden_bias = hidden_bias
 
@@ -29,6 +29,7 @@ class SimpleAI(object):
                 ('average_damage', np.float32),
                 ('target_health', np.float32)
                 ]
+        self.name = name
 
     def load_from_file(self, fn):
         def load(f):
