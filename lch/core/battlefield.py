@@ -147,7 +147,7 @@ class Battlefield(object):
                 }
         return json.dumps(d)
 
-    def adjacent(self, position: ty.Union[ty.Tuple[int,int], list[ty.Tuple[int,int]]]) -> set:
+    def adjacent(self, position: ty.Union[ty.Tuple[int,int], ty.Tuple[ty.Tuple[int,int]]]) -> set:
         if isinstance(position, tuple):
             return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
         elif isinstance(position, (list, set)):
@@ -304,7 +304,7 @@ class Battlefield(object):
             self.astar_cache[(a, b)] = self.astar_compute(a, b)
 
     def astar_path_test(self, start: ty.Tuple[int, int], end: ty.Tuple[int, int],
-            max_distance=1e12, blocked=None) -> ty.Tuple[list[ty.Tuple[int,int]], float]:
+            max_distance=1e12, blocked=None):
         """
         First checks the cache to see if the result is valid.
         If one square is in the blocked set then farms out
@@ -329,7 +329,7 @@ class Battlefield(object):
         return path, dist
 
     def astar_path(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int],
-            max_distance=1e12, blocked=None) -> ty.Tuple[list[ty.Tuple[int, int]], float]:
+            max_distance=1e12, blocked=None):
         '''
         A* pathfinding algorithm
         :param start: (x,y) tuple, start position
