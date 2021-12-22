@@ -1,16 +1,32 @@
 import lch
 import copy
 
+__all__ = 'Team'.split()
 
 class Team(object):
     """
     """
-    def __init__(self, models, ai=None):
+    def __init__(self, models, ai):
         self.models = [copy.copy(m) for m in models]
+        self.hash = lch.get_hash(*[m.hash for m in models], ai.hash)
+        self.logger = lch.get_logger('team', self.hash)
         self.AI = ai
         for m in self.models:
             m.team = self
-        #print('This team consists of:', self.models)
+            m.logger = self.logger
+
+    def encode(self):
+        """
+        A db-serializable tuple
+        """
+        pass
+
+    @staticmethod
+    def decode(*args):
+        """
+        The reverse of encode
+        """
+        pass
 
     def ready_up(self):
         for model in self.models:

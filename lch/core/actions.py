@@ -7,17 +7,17 @@ __all__ = 'Action NoAction MoveAction MeleeAction ShootAction SnapShotAction Cha
 dice_log = []
 
 def chance_to_hit_ranged(attacker, defender, obstruction=0, category=None, moved=False):
-    consistency = attacker.ranged_consistency
-    skill = attacker.ranged_skill - (0 if not moved else consistency)
+    consistency = attacker.rc
+    skill = attacker.rs - (0 if not moved else consistency)
     defense = defender.dodge
     # TODO add range penalties
     return norm.sf(defense, loc=skill, scale=consistency)
 
 def chance_to_hit_melee(attacker, defender, category=None, charged=False, n_trials = 1000):
-    a_consistency = attacker.melee_consistency
-    a_skill = attacker.melee_skill + (0 if not charged else a_consistency)
-    d_skill = defender.melee_skill
-    d_consistency = defender.melee_consistency
+    a_consistency = attacker.mc
+    a_skill = attacker.ms + (0 if not charged else a_consistency)
+    d_skill = defender.ms
+    d_consistency = defender.mc
     a = norm.rvs(loc=a_skill, scale=a_consistency, size=n_trials)
     d = norm.rvs(loc=d_skill, scale=d_consistency, size=n_trials)
     return (a > d).sum()/n_trials
@@ -26,48 +26,48 @@ def do_damage(attacker, defender, weapon):
     effective_armor = max(defender.armor - weapon.punch, 0)
     damage = max(weapon.damage() - effective_armor, 0)
     #print(f'Attacker does {damage} vs {effective_armor}')
-    defender.health -= damage
-    if defender.health <= 0:
+    defender.current_health -= damage
+    if defender.current_health <= 0:
         defender.status = 'dead'
-        defender.health = 0
+        defender.current_health = 0
         #print('You is dead, son')
     return
 
 def ranged_combat_action(attacker, defender, obstruction=0, moved=False):
     #print(f'{attacker} attacks {defender}')
     if moved:
-        if attacker.ranged_weapon.category in ['heavy']:
-            penalty = attacker.ranged_consistency
-        elif attacker.ranged_weapon.category in ['assault']:
+        if attacker.rw.category in ['heavy']:
+            penalty = attacker.rc
+        elif attacker.rw.category in ['assault']:
             penalty = 0
         else:
-            penalty = 0.5*attacker.ranged_consistency
+            penalty = 0.5*attacker.rc
     else:
         penalty = 0
-    skill = attacker.ranged_skill - penalty
-    hit_roll = norm.rvs(loc=skill, scale=attacker.ranged_consistency)
-    #dice_log.append((skill, attacker.ranged_consistency, hit_roll))
+    skill = attacker.rs - penalty
+    hit_roll = norm.rvs(loc=skill, scale=attacker.rc)
+    #dice_log.append((skill, attacker.rc, hit_roll))
     if hit_roll <= defender.dodge:
         #print(f'Attack roll {hit_roll} misses {defender.dodge}')
         return
 
     #print(f'{hit_roll} hits {defender.dodge}')
-    do_damage(attacker, defender, attacker.ranged_weapon)
+    do_damage(attacker, defender, attacker.rw)
     return
 
 def melee_combat_action(attacker, defender, charged=False):
     #print(f'{attacker} attacks {defender}')
-    skill = attacker.melee_skill + (0 if not charged else attacker.melee_consistency)
-    attack_roll = norm.rvs(loc=skill, scale=attacker.melee_consistency)
-    defense_roll = norm.rvs(loc=defender.melee_skill, scale=defender.melee_consistency)
-    #dice_log.append((skill, attacker.melee_consistency, attack_roll))
-    #dice_log.append((defender.melee_skill, defender.melee_consistency, defense_roll))
+    skill = attacker.ms + (0 if not charged else attacker.mc)
+    attack_roll = norm.rvs(loc=skill, scale=attacker.mc)
+    defense_roll = norm.rvs(loc=defender.ms, scale=defender.mc)
+    #dice_log.append((skill, attacker.mc, attack_roll))
+    #dice_log.append((defender.ms, defender.mc, defense_roll))
     if attack_roll <= defense_roll:
         #print(f'Attack roll {attack_roll} misses {defense_roll}')
         return
 
     #print(f'{attack_roll} hits {defense_roll}')
-    do_damage(attacker, defender, attacker.melee_weapon)
+    do_damage(attacker, defender, attacker.mw)
     return
 
 class Action(object):
@@ -97,7 +97,7 @@ class Action(object):
             setattr(self, k, kwargs.pop(k, 0))
         self.hit_prob = 0
         self.avg_damage = 0
-        self.target_health = 0 if target is None else target.health
+        self.target_health = 0 if target is None else target.current_health
         for k,v in kwargs.items():
             setattr(self, k, v)
 
@@ -127,6 +127,7 @@ class Action(object):
         self.model.position = self.move_destination
 
     def attack(self, attack_type):
+        self.model.status = 'activated'
         if attack_type == 'ranged':
             return ranged_combat_action(self.model, self.target, isinstance(self, MoveAction))
         if attack_type == 'melee':
@@ -149,8 +150,6 @@ class NoAction(Action):
     def __str__(self):
         return "No action"
 
-    def engage(self):
-        pass
 
 class MoveAction(Action):
     def __init__(self, **kwargs):
@@ -164,8 +163,8 @@ class ShootAction(Action):
         super().__init__(**kwargs)
         if not hasattr(self, 'obstruction'):
             self.obstruction = 0
-        self.hit_prob = chance_to_hit_ranged(self.model, self.target, self.obstruction, self.model.ranged_weapon.category, issubclass(self.__class__, MoveAction))
-        self.avg_damage = self.model.ranged_weapon.avg_damage
+        self.hit_prob = chance_to_hit_ranged(self.model, self.target, self.obstruction, self.model.rw.category, isinstance(self, MoveAction))
+        self.avg_damage = self.model.rw.avg_damage
 
     def engage(self):
         self.attack('ranged')
@@ -173,8 +172,8 @@ class ShootAction(Action):
 class MeleeAction(Action):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.hit_prob = chance_to_hit_melee(self.model, self.target, self.model.melee_weapon.category, issubclass(self.__class__, MoveAction))
-        self.avg_damage = self.model.melee_weapon.avg_damage
+        self.hit_prob = chance_to_hit_melee(self.model, self.target, self.model.mw.category, isinstance(self, MoveAction))
+        self.avg_damage = self.model.mw.avg_damage
 
     def engage(self):
         self.attack('melee')

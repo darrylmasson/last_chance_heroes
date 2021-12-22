@@ -1,27 +1,78 @@
 import itertools
-from enum import IntEnum
 import datetime
+import logging
+import hashlib
+from functools import partial
+from enum import IntEnum
 
-class LogLevel(IntEnum):
-    trace=0,
-    detailed=1,
-    debug=2,
-    info=3,
-    warning=4,
-    error=5,
-    fatal=6
+__all__ = 'get_hash get_logger PriorityQueue'.split()
 
-class Logger(object):
+def get_hash(*args, hash_length=6):
+    m = hashlib.sha256()
+    for arg in args:
+        m.update(str(arg).encode())
+    return m.hexdigest()[:hash_length]
+
+class LogLevels(IntEnum):
+    TRACE = 0
+    DEBUG = 1
+    INFO = 2
+    WARNING = 3
+    ERROR = 4
+    CRITICAL = 5
+
+class ScratchLogger(object):
     """
-    Custom logging class because reasons
+    From scratch because the python logging
+    isn't working?
     """
-    level = LogLevel.debug
-    def __init__(self, module):
+    def __init__(self, printlevel='info', filelevel='debug', module=None, _hash=None, f=None):
         self.module = module
+        self.hash = _hash
+        self.f = f
+        self.printlevel = LogLevels[printlevel.upper()]
+        self.filelevel = LogLevels[filelevel.upper()]
+        for lvl in 'trace debug info warning error critical'.split():
+            setattr(self, lvl, partial(self.log, lvl.upper()))
 
-    def entry(self, level, message):
-        if LogLevel[level] >= self.level:
-            print(f'{datetime.datetime.now().isoformat(sep=" ")} | {level.upper()} | {message}')
+    def log(self, level, msg):
+        now = datetime.datetime.now()
+        m = (f'{now.isoformat(sep=" ")} | '
+             f'{self.module} | '
+             f'{level} | '
+             #f'{record.funcName} | '
+             #f'{record.lineno} | '
+             f'{msg}')
+        if LogLevels[level] >= self.filelevel and self.f is not None:
+            self.f.write(m + '\n')
+            self.f.flush()
+        if LogLevels[level] >= self.printlevel:
+            print(m)
+
+class LogHandler(logging.Handler):
+    def __init__(self, module, game_hash):
+        logging.Handler.__init__(self)
+        self.module = module
+        self.f = open(f'logs/test.log', 'w')
+
+    def __del__(self):
+        self.f.close()
+
+    def emit(self, record):
+        msg_datetime = datetime.datetime.fromtimestamp(record.created)
+        m = (f'{msg_datetime.isoformat(sep=" ")} | '
+             f'{self.module} | '
+             f'{str(record.levelname).upper()} | '
+             f'{record.funcName} | '
+             f'{record.lineno} | '
+             f'{record.getMessage()}')
+        self.f.write(m + '\n')
+        self.f.flush()
+        #if record.level >= logging.INFO:
+        print(m)
+
+def get_logger(module, game_hash, f=None):
+    return ScratchLogger(module=module, _hash=game_hash)
 
 
 class PriorityQueue(object):
@@ -74,7 +125,7 @@ class PriorityQueue(object):
     def get(self):
         """
         Returns the item with the lowest score (aka the first item). Does not return
-        the priority
+        the priority because usually we don't care
         """
         return self.q.pop(0)[0]
 

@@ -7,4 +7,3 @@ from .ai import *
 from .team import *
 from .battlefield import *
 from .game import *
-#from .test_inst import *

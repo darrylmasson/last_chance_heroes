@@ -11,7 +11,7 @@ class SimpleAI(object):
     def __init__(self,
             hidden_controls=None, hidden_bias=None,
             output_controls=None, output_bias=None,
-            top_n=None, name=None):
+            top_n=None, parent_hash=None):
         self.hidden_controls = hidden_controls
         self.hidden_bias = hidden_bias
 
@@ -29,22 +29,15 @@ class SimpleAI(object):
                 ('average_damage', np.float32),
                 ('target_health', np.float32)
                 ]
-        self.name = name
+        self.hash = lch.get_hash(
+                self.hidden_controls.tobytes().hex().encode(),
+                self.hidden_bias.tobytes().hex().encode(),
+                self.output_controls.tobytes().hex().encode(),
+                self.output_bias.tobytes().hex().encode())
+        self.parent_hash = parent_hash or '0'*6
 
-    def load_from_file(self, fn):
-        def load(f):
-            self.hidden_controls = ff['hidden_controls']
-            self.hidden_bias = ff['hidden_bias']
-            self.output_controls = ff['output_controls']
-            self.output_bias = ff['output_bias']
-
-        if isinstance(fn, str):
-            with open(fn, 'rb') as f:
-                ff = np.load(f)
-                load(ff)
-        else:
-            with np.load(fn) as ff:
-                load(ff)
+    def __eq__(self, rhs):
+        return self.hash == rhs.hash
 
     def normalize_input(self, actions):
         normed = np.zeros((len(actions), len(self.dtype)))
@@ -113,7 +106,7 @@ class SimpleAI(object):
         for i,a in enumerate(normed):
             #print('a', a.shape)
             #print('hc', self.hidden_controls.shape)
-            hidden = (self.hidden_controls @ a.reshape((8,1,))) + self.hidden_bias
+            hidden = (self.hidden_controls @ a.reshape((8,1))) + self.hidden_bias
             #print('hb', self.hidden_bias.shape)
             hidden = self.activation_function_hidden(hidden)
             #print('h', hidden.shape)
@@ -128,10 +121,14 @@ class SimpleAI(object):
         if self.top_n is None:
             best_i = np.argmax(prob)
         else:
-            n = max(self.top_n, len(prob))
-            top = np.argsort(prob)[-n:]
-            p = prob[top]
-            best_i = np.random.choice(n, p=p/p.sum())
-
+            n = min(self.top_n, len(prob))
+            cutoff = np.sort(prob)[-n]
+            prob[prob < cutoff] = 0
+            if (s := prob.sum()) == 0:
+                # whoops?
+                p = np.ones(len(prob))/len(prob)
+            else:
+                p = prob/s
+            best_i = np.random.choice(len(prob), p=p)
         return actions[best_i]
 

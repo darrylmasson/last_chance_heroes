@@ -27,7 +27,7 @@ class Forest(object):
             cls.init()
         if (x,y) in cls.tree_locations:
             return -1, -1
-        return 1,0
+        return 1,1
 
 def forest(x,y):
     return Forest.generate(x,y)

@@ -1,7 +1,10 @@
 import lch
 from math import sqrt, sin, cos, atan2, pi
-from collections import defaultdict
 import typing as ty
+import itertools
+import tqdm
+
+__all__ = 'Battlefield'.split()
 
 
 class Location(object):
@@ -41,8 +44,7 @@ class Battlefield(object):
     def __init__(self,
             size_x: int,
             size_y: int,
-            terrain_func: ty.Callable[[int,int],ty.Tuple[float,float]],
-            logger=None):
+            terrain_func: ty.Callable[[int, int], ty.Tuple[float, float]]):
         """
         :param size_x: size of the battlefield in the X direction
         :param size_y: same, in Y
@@ -52,12 +54,10 @@ class Battlefield(object):
             unobstructed, more means difficult. The second determines line-of-sight
             difficulty, 1 means unobstructed, more means difficult. -1 means
             impassable.
-        :param logger: Logger instance
         """
-        self.cache = defaultdict(None)
+        self.cache = {}
         self.size = (size_x, size_y)
         self.terrain_func = terrain_func
-        self.logger = logger
         # first, generate terrain
         for x in range(size_x):
             for y in range(size_y):
@@ -104,7 +104,6 @@ class Battlefield(object):
         for (x,y), this_sq in self.cache.items():
             if this_sq.move_scale != -1:
                 continue
-            x,y = this_sq.position
             for direction in range(0,8,2):
                 x1, y1 = x+_adjacent[direction][0], y+_adjacent[direction][1]
                 direction = (direction+2)%8
@@ -114,9 +113,27 @@ class Battlefield(object):
                     sq1.move_cost[(x2, y2)] = -1
                     sq2.move_cost[(x1, y1)] = -1
 
-    def log(self, level: str, message: str) -> None:
-        if self.logger is not None:
-            self.logger.entry(level, message)
+        l = []
+        for (x,y), sq in self.cache.items():
+            if sq.move_scale != 1 or sq.los_scale != 1:
+                l.append((x, y, sq.move_scale, sq.los_scale))
+        self.hash = lch.get_hash(','.join(map(str,l)))
+        self.logger = lch.get_logger('battlefield', self.hash)
+        self.logger.trace(f'BF: {" | ".join(map(str, l))}')
+        self.astar_cache = {}
+
+    def encode(self):
+        """
+        A db-serializable list of tuples
+        """
+        pass
+
+    @staticmethod
+    def decode(tuples):
+        """
+        The inverse of encode
+        """
+        pass
 
     def get_json(self) -> str:
         d = {
@@ -130,7 +147,7 @@ class Battlefield(object):
                 }
         return json.dumps(d)
 
-    def adjacent(self, position: ty.Union[ty.Tuple[int,int], list]) -> set:
+    def adjacent(self, position: ty.Union[ty.Tuple[int,int], list[ty.Tuple[int,int]]]) -> set:
         if isinstance(position, tuple):
             return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
         elif isinstance(position, (list, set)):
@@ -153,7 +170,7 @@ class Battlefield(object):
         C, S = cos(theta), sin(theta)
         dx = 1 if end[0] >= start[0] else -1
         dy = 1 if end[1] >= start[1] else -1
-        self.log('trace', f'Direction: {dx},{dy},{theta:.3f}')
+        #self.logger.trace(f'Direction: {dx},{dy},{theta:.3f}')
 
         while current != end:
             # evaluate potential next squares
@@ -203,6 +220,7 @@ class Battlefield(object):
         :param end: (x,y) tuple, end position
         :returns:
         """
+        raise NotImplementedError()
         theta = atan2(end[1]-start[1], end[0]-start[0])
         t = theta % (pi/4)
         d1 = int(round(0.5*(cos(t)+sin(t)))*1000)
@@ -221,7 +239,7 @@ class Battlefield(object):
         :param end: (x,y) tuple, end coordinates (not integers)
         :returns: (float, float) tuple, integrated obstruction > 0, integrated obstruction < 0
         """
-        pass
+        raise NotImplementedError()
 
     @staticmethod
     def dist_to_line(pos: ty.Tuple[int,int], ref: ty.Tuple[int,int],
@@ -275,14 +293,52 @@ class Battlefield(object):
         blah = self.cache[end].cover.get((dx, dy))
         return blah or 1.
 
+    def fill_astar_cache(self, **kwargs) -> None:
+        all_squares = itertools.product(range(self.size[0]), range(self.size[1]))
+        for a, b in tqdm.tqdm(itertools.combinations(all_squares, 2), **kwargs):
+            if (a, b) in self.astar_cache or \
+                    (b, a) in self.astar_cache or \
+                    self.cache[a].move_scale == -1 or \
+                    self.cache[b].move_scale == -1:
+                continue
+            self.astar_cache[(a, b)] = self.astar_compute(a, b)
+
+    def astar_path_test(self, start: ty.Tuple[int, int], end: ty.Tuple[int, int],
+            max_distance=1e12, blocked=None) -> ty.Tuple[list[ty.Tuple[int,int]], float]:
+        """
+        First checks the cache to see if the result is valid.
+        If one square is in the blocked set then farms out
+        for recomputing
+        """
+        blocked = blocked or set()
+        if (start, end) in self.astar_cache or (end, start) in self.astar_cache:
+            path, dist = self.astar_cache.get((start, end)) or \
+                    self.astar_cache.get((end, start))
+            for sq in path:
+                if sq in blocked:
+                    # this path is invalid, must recompute
+                    return self.astar_compute(start, end, max_distance, blocked)
+            self.logger.trace(f'Using cached path from {start} to {end}')
+            if path[0] == start:
+                return path, dist
+            # gotta swap the path
+            path.reverse()
+            return path, dist
+        path, dist = self.astar_compute(start, end, max_distance, blocked)
+        self.astar_cache[(start, end)] = (path, dist)
+        return path, dist
+
     def astar_path(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int],
-            max_distance=None) -> ty.Tuple[list, float]:
+            max_distance=1e12, blocked=None) -> ty.Tuple[list[ty.Tuple[int, int]], float]:
         '''
         A* pathfinding algorithm
         :param start: (x,y) tuple, start position
         :param end: (x,y) tuple, end position
-        :param max_distance: the maximum distance you want to consider. Default None,
-            which means all
+        :param max_distance: the maximum distance you want to consider. Default 
+            large number which means all
+        :param blocked: squares that can't be moved through for other reasons 
+            (probably occupied)
+        :param _bypass: bypass the cache? Useful when building it
         :returns: (path, total distance)
         '''
         def heuristic(a,b):
@@ -293,19 +349,25 @@ class Battlefield(object):
             dy = abs(y1-y2)
             # scale the diagonal bit by sqrt(2)
             return 0.414*min(dx, dy) + max(dx, dy)
+
         frontier = lch.PriorityQueue(start)
         came_from = {start: (None,0)}
+        blocked = blocked or set()
+        self.logger.trace(f'Computing a* from {start} to {end} dist {max_distance}')
 
-        while not frontier.empty:
-            if (current := frontier.get()) == end:
-                break
+        if heuristic(start, end) > max_distance:
+            # best case distance is too far
+            #self.logger.trace(f'Distance too far')
+            return [], -1
+
+        while not frontier.empty and (current := frontier.get()) != end:
             #self.log('trace', f'Current: {current} | {cost_so_far[current]:.1f}')
-            for _next, differential_cost in self.cache[current].move_cost.items():
-                if differential_cost == -1:
+            for _next, diff_cost in self.cache[current].move_cost.items():
+                if diff_cost == -1 or _next in blocked:
                     continue
-                new_cost = came_from[current][1] + differential_cost
+                new_cost = came_from[current][1] + diff_cost
                 #self.log('trace', f'Evaluating {_next}: {cost:.1f} {new_cost:.1f}')
-                if ((max_distance is None or new_cost <= max_distance) and
+                if (new_cost <= max_distance and
                         (_next not in came_from or new_cost < came_from[_next][1])):
                     priority = heuristic(end, _next) + new_cost
                     frontier.put(_next, priority)
@@ -313,6 +375,7 @@ class Battlefield(object):
                     came_from[_next] = (current, new_cost)
         if end not in came_from:
             # didn't make it
+            self.logger.trace(f'No path found')
             return [], -1
         path = []
         current = end
@@ -321,30 +384,34 @@ class Battlefield(object):
             current = came_from[current][0]
         path.append(start)
         path.reverse()
+        self.logger.trace(f'Found path with length {came_from[end][1]}')
         return path, came_from[end][1]
 
     def reachable(self,
             start: ty.Tuple[int,int],
-            max_distance: int) -> ty.Generator[ty.Tuple[int,int], None, None]:
+            max_distance: int,
+            blocked=None) -> ty.Generator[ty.Tuple[int,int], None, None]:
         '''
         Dijkstra's alg. This is a generator because it's only ever used as
         "for position in reachable"
         :param start: (x,y) tuple, start location
         :param max_distance: maximum distance to consider
+        :param blocked: additional squares that cannot be passed through
         :yields: (x,y) positions that can be reached
         '''
         frontier = lch.PriorityQueue(start)
-        came_from = {start: (None,0)}
-        already_seen = set()
+        came_from = {start: (None, 0)}
+        blocked = blocked or set()
+        self.logger.trace(f'Finding all squares within {max_distance} of {start}')
 
         while not frontier.empty:
             current = frontier.get()
             yield current
-            already_seen.add(current)
-            for _next, differential_cost in self.cache[current].move_cost.items():
-                if _next in already_seen or differential_cost == -1:
+            blocked.add(current)
+            for _next, diff_cost in self.cache[current].move_cost.items():
+                if _next in blocked or diff_cost == -1:
                     continue
-                new_cost = came_from[current][1] + differential_cost
+                new_cost = came_from[current][1] + diff_cost
                 if (new_cost < max_distance and 
                         (_next not in came_from or new_cost < came_from[_next][1])):
                     frontier.put(_next, new_cost)

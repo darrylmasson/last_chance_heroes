@@ -2,7 +2,7 @@ import lch
 import typing as ty
 import random
 
-__all__ = 'Weapon MeleeWeapon RangedWeapon NoRangedWeapon'.split()
+__all__ = 'Weapon MeleeWeapon RangedWeapon'.split()
 
 class Weapon(object):
     """
@@ -14,12 +14,24 @@ class Weapon(object):
         self.category = category
         self._damage = (min_damage, max_damage)
         self.owner = owner
+        self.hash = lch.get_hash(*map(str, self.stats))
 
     def __str__(self):
         return f'{self.name} ({self.range}/{self.attacks}/{self.punch})'
 
     def __eq__(self, rhs):
-        return self.name == rhs.name
+        return self.hash == rhs.hash
+
+    @property
+    def stats(self):
+        return (self.range, self.attacks, self.punch, self.category, self._damage[0], self._damage[1])
+
+    def encode(self):
+        return (self.hash, self.range, self.attacks, self.punch, self.category, self._damage[0], self._damage[1])
+
+    @staticmethod
+    def decode(self, *args):
+        pass
 
     @property
     def avg_damage(self):
@@ -34,8 +46,8 @@ class Weapon(object):
 
 class MeleeWeapon(Weapon):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
         self.range = 0
+        super().__init__(**kwargs)
 
     def chance_to_hit(self, target, bf):
         if self.owner.position not in bf.adjacent(target.position):
@@ -86,6 +98,3 @@ class Sword(MeleeWeapon):
 
 class Axe(MeleeWeapon):
     pass
-
-NoRangedWeapon = RangedWeapon(name="None", range=-1, attacks=0)
-
