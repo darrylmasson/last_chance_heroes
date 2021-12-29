@@ -1,17 +1,81 @@
 import lch
 import numpy as np
+import io
 
-__all__ = 'SimpleAI'.split()
+__all__ = 'AI SimpleAI'.split()
 
-class SimpleAI(object):
+class AI(object):
     """
+    A base class implementing some common things
     """
-    action_fields = 8 # len(lch.NoAction().normalize())
+    def __init__(self):
+        pass
+
+    def __eq__(self, rhs):
+        return self.hash == rhs.hash
+
+    @staticmethod
+    def create_table(conn):
+        try:
+            conn.execute('CREATE TABLE ai ( '
+                'hash TEXT PRIMARY KEY NOT NULL, '
+                'parent_hash TEXT, '
+                'class_name TEXT, '
+                'binary BLOB );')
+        except Exception as e:
+            pass
+
+    @classmethod
+    def fields(cls):
+        raise NotImplementedError()
+
+    @staticmethod
+    def from_hash(_hash):
+        args = lch.load_from_cache('ai', _hash)
+        return getattr(lch, args[2]).from_tuple(args)
+
+    def encode(self):
+        """
+        Encodes self into a database-serializable tuple with format (hash, parent_hash
+        class name, blob of np-compressed data)
+        """
+        with io.BytesIO() as f:
+            np.savez_compressed(f, **{k: getattr(self, k) for k in self.fields()})
+            return (self.hash, self.parent_hash, self.__class__.__name__, f.getvalue())
+
+    @classmethod
+    def from_tuple(cls, args):
+        """
+        The opposite of encode - generates a new *AI from the tuple
+        stored in the database
+        """
+        _hash, parent_hash, _, blob = args
+        with io.BytesIO(blob) as f:
+            data = np.load(f)
+            return cls(_hash = _hash, parent_hash=parent_hash,
+                    **{k: data[k] for k in cls.fields()})
+
+class SimpleAI(AI):
+    """
+    A very simple ML ai, one hidden layer with 12 nodes, 8 input fields
+    """
+    nodes = 12
+    dtype = [
+            ('n_actions', np.float32),
+            ('shootable_targets', np.float32),
+            ('chargeable_targets', np.float32),
+            ('can_shoot_back', np.float32),
+            ('can_charge_back', np.float32),
+            ('chance_to_hit', np.float32),
+            ('average_damage', np.float32),
+            ('target_health', np.float32)
+            ]
 
     def __init__(self,
             hidden_controls=None, hidden_bias=None,
             output_controls=None, output_bias=None,
-            top_n=None, parent_hash=None):
+            top_n=None, _hash=None, parent_hash=None,
+            games=None, generations=None):
         self.hidden_controls = hidden_controls
         self.hidden_bias = hidden_bias
 
@@ -19,27 +83,66 @@ class SimpleAI(object):
         self.output_bias = output_bias
 
         self.top_n = top_n
-        self.dtype = [
-                ('n_actions', np.float32),
-                ('shootable_targets', np.float32),
-                ('chargeable_targets', np.float32),
-                ('can_shoot_back', np.float32),
-                ('can_charge_back', np.float32),
-                ('chance_to_hit', np.float32),
-                ('average_damage', np.float32),
-                ('target_health', np.float32)
-                ]
-        self.hash = lch.get_hash(
-                self.hidden_controls.tobytes().hex().encode(),
-                self.hidden_bias.tobytes().hex().encode(),
-                self.output_controls.tobytes().hex().encode(),
-                self.output_bias.tobytes().hex().encode())
+        self.hash = _hash or lch.get_hash(
+                self.hidden_controls.tobytes().hex(),
+                self.hidden_bias.tobytes().hex(),
+                self.output_controls.tobytes().hex(),
+                self.output_bias.tobytes().hex(),
+                self.top_n)
         self.parent_hash = parent_hash or '0'*6
 
-    def __eq__(self, rhs):
-        return self.hash == rhs.hash
+        self.games = games or 0
+        self.generations = generations or 0
+
+    @classmethod
+    def from_scratch(cls):
+        """
+        Returns a new SimpleAI with random parameters
+        """
+        return cls(
+                hidden_controls = np.random.random(size=(cls.nodes, len(cls.dtype))),
+                hidden_bias = np.random.random(size=(cls.nodes, 1)),
+                output_controls = np.random.random(size=(1, cls.nodes)),
+                output_bias = np.random.random(size=(1,1)),
+                top_n = np.random.randint(3, 6))
+
+    @classmethod
+    def fields(cls):
+        """
+        Returns a list of things to be serialized
+        """
+        return 'hidden_controls hidden_bias output_controls output_bias top_n games generations'.split()
+
+    def mutate(self, step=0.01, prob=0.5):
+        """
+        Mutate into a child
+        :param step: how much to change parameters by, default 0.01
+        :param prob: the probability that a any one value changes, default 0.5
+        :returns: a hash of a new SimpleAI
+        """
+        mask = np.random.random(size=self.hidden_controls.shape) > prob
+        hc_change = mask*step*(np.random.random(size=self.hidden_controls.shape) - 0.5)
+        mask = np.random.random(size=self.hidden_bias.shape) > prob
+        hb_change = mask*step*(np.random.random(size=self.hidden_bias.shape) - 0.5)
+        mask = np.random.random(size=self.output_controls.shape) > prob
+        oc_change = mask*step*(np.random.random(size=self.output_controls.shape) - 0.5)
+        mask = np.random.random(size=self.output_bias.shape) > prob
+        ob_change = mask*step*(np.random.random(size=self.output_bias.shape) - 0.5)
+        top_n_change = np.random.choice([-1,0,1], p=[step, 1-2*step, step]) * (np.random.random() > prob)
+
+        return self.__class__(hidden_controls = self.hidden_controls + hc_change,
+                    hidden_bias = self.hidden_bias + hb_change,
+                    output_controls = self.output_controls + oc_change,
+                    output_bias = self.output_bias + ob_change,
+                    top_n = min(1, self.top_n + top_n_change),
+                    parent_hash = self.hash)
 
     def normalize_input(self, actions):
+        """
+        Takes a list of actions and normalizes them pre-selection
+        :param actions: a list of unencoded actions to normalize
+        :returns: a np array of encoded and normalized actions
+        """
         normed = np.zeros((len(actions), len(self.dtype)))
         for i,a in enumerate(actions):
             normed[i] = a.normalize()
@@ -98,27 +201,23 @@ class SimpleAI(object):
 
     def select_action(self, actions):
         """
+        Selects from the provided actions via ML magicks
+        :param actions: list of Action objects
+        :returns: Action object that is the "best" one
         """
         if len(actions) == 0:
             return NoAction()
         normed = self.normalize_input(actions)
         prob = np.zeros(len(normed))
         for i,a in enumerate(normed):
-            #print('a', a.shape)
-            #print('hc', self.hidden_controls.shape)
             hidden = (self.hidden_controls @ a.reshape((8,1))) + self.hidden_bias
-            #print('hb', self.hidden_bias.shape)
             hidden = self.activation_function_hidden(hidden)
-            #print('h', hidden.shape)
 
             output = (self.output_controls @ hidden) + self.output_bias
-            #print('oc', self.output_controls.shape)
             output = self.activation_function_output(output)
-            #print('o', output.shape)
             prob[i] = output
-            #print(f'{actions[i]}: {output}')
 
-        if self.top_n is None:
+        if self.top_n is None or self.top_n == 1:
             best_i = np.argmax(prob)
         else:
             n = min(self.top_n, len(prob))

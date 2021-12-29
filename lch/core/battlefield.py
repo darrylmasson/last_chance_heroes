@@ -44,7 +44,8 @@ class Battlefield(object):
     def __init__(self,
             size_x: int,
             size_y: int,
-            terrain_func: ty.Callable[[int, int], ty.Tuple[float, float]]):
+            terrain_func=None,
+            terrain_list=None):
         """
         :param size_x: size of the battlefield in the X direction
         :param size_y: same, in Y
@@ -54,14 +55,25 @@ class Battlefield(object):
             unobstructed, more means difficult. The second determines line-of-sight
             difficulty, 1 means unobstructed, more means difficult. -1 means
             impassable.
+        :param terrain_list: list of (x,y,float,float), the pre-computed result
+            of the terrain function
         """
+        assert terrain_func is not None or terrain_list is not None, (
+                "Specify at least one way of determining terrain")
         self.cache = {}
         self.size = (size_x, size_y)
-        self.terrain_func = terrain_func
         # first, generate terrain
-        for x in range(size_x):
-            for y in range(size_y):
-                self.cache[(x,y)] = Location(x, y, *terrain_func(x,y))
+        if terrain_func is not None:
+            for x in range(size_x):
+                for y in range(size_y):
+                    self.cache[(x,y)] = Location(x, y, *terrain_func(x,y))
+        else:
+            for x, y, move, los in terrain_list:
+                self.cache[(x,y)] = Location(x, y, move, los)
+            for x in range(size_x):
+                for y in range(size_y):
+                    if (x,y) not in self.cache:
+                        self.cache[(x,y)] = Location(x, y, 1, 1)
 
         # now, make it into a graph
         _adjacent = [ # CCW from +x
@@ -121,33 +133,32 @@ class Battlefield(object):
         self.logger = lch.get_logger('battlefield', self.hash)
         self.logger.trace(f'BF: {" | ".join(map(str, l))}')
         self.astar_cache = {}
+        self.los_cache = {}
 
     def encode(self):
         """
         A db-serializable list of tuples
         """
-        pass
+        return [(self.size[0], self.size[1], 0, 0)] + [
+                (x,y,sq.move_scale, sq.los_scale)
+                for (x,y), sq in self.cache.items()
+                if sq.move_scale != 1 and sq.los_scale != 1
+        ]
 
-    @staticmethod
-    def decode(tuples):
+    @classmethod
+    def decode(cls, tuples):
         """
         The inverse of encode
         """
-        pass
+        size_x, size_y = tuples[0][:2]
+        return cls(size_x, size_y, terrain_list=tuples[1:])
 
-    def get_json(self) -> str:
-        d = {
-                'size': list(self.size()),
-                'nonzero': [
-                    dict(x=x,y=y,m=s['move_scale'],v=s['los_scale'])
-                    for (x,y), s in self.cache.items()
-                    ],
-                'team1': self.team1.get_dict(),
-                'team2': self.team2.get_dict()
-                }
-        return json.dumps(d)
-
-    def adjacent(self, position: ty.Union[ty.Tuple[int,int], ty.Tuple[ty.Tuple[int,int]]]) -> set:
+    def adjacent(self, position):
+        """
+        All squares adjacent to the input
+        :param position: (x,y) tuple or list of (x,y) tuples, the squares of interest
+        :returns: set of (x,y) tuples
+        """
         if isinstance(position, tuple):
             return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
         elif isinstance(position, (list, set)):
@@ -157,13 +168,13 @@ class Battlefield(object):
             return ret - set(position)
         raise ValueError(f'Invalid position: {type(position)}, must be list or tuple')
 
-    def straight_line(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int], penetrating=False) -> ty.Generator[ty.Tuple[int,int],None,None]:
+    def straight_line(self, start, end, penetrating=False):
         """
         Generator for squares falling in a straight line
         :param start: (x,y) tuple, starting point
         :param end: (x,y) tuple, end point
-        :bool penetrating: ignore obstructions on exact corners
-        :yields: squares along the line
+        :bool penetrating: ignore obstructions on exact corners, default False
+        :yields: (x,y) squares along the line
         """
         current = start
         theta = atan2(end[1]-start[1], end[0]-start[0])
@@ -187,7 +198,7 @@ class Battlefield(object):
                 current = (current[0]+dx, current[1]+dy)
             yield current
 
-    def los_range(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int]) -> ty.Tuple[float, float]:
+    def los_range(self, start, end):
         """
         A to B as the crow (or bullet) flies, accounting for LOS blocking. Does
         a bunch of math to account for only crossing the corner of a square
@@ -195,6 +206,11 @@ class Battlefield(object):
         :param end: (x,y) tuple, end position
         :returns: (float, float) tuple, LOS distance and amount of obstruction
         """
+        # check the cache
+        if (a := self.los_cache.get((start, end))) is not None or \
+                (b := self.los_cache.get((end, start))) is not None:
+            return a or b
+
         distance = sqrt((start[0]-end[0])**2 + (start[1]-end[1])**2)
         if end in self.cache[start].los_cost:
             # squares are adjacent
@@ -210,9 +226,10 @@ class Battlefield(object):
         # we only need to cross half
         # TODO walk before run
         #obstruction -= self.cache[end].los_scale*self.dist_through_square(0, theta)*0.5
+        self.los_cache[(start, end)] = distance, obstruction
         return distance, obstruction
 
-    def evaluate_los(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int]) -> ty.Tuple[float, float]:
+    def evaluate_los(self, start, end):
         """
         How clear of a shot do you have from start to end? Evaluates both outside corners as well as one inside corner.
         If all three are obstructed then no bueno
@@ -232,7 +249,7 @@ class Battlefield(object):
             pass
         return
 
-    def evaluate_line(self, start: ty.Tuple[float, float], end: ty.Tuple[float, float]) -> ty.Tuple[float, float]:
+    def evaluate_line(self, start, end):
         """
         Evaluates LOS and obstruction along a line from one corner of one square to another corner of another
         :param start: (x,y) tuple, start coordinates (not integers)
@@ -242,8 +259,7 @@ class Battlefield(object):
         raise NotImplementedError()
 
     @staticmethod
-    def dist_to_line(pos: ty.Tuple[int,int], ref: ty.Tuple[int,int],
-                     theta: float, scale=1000) -> int:
+    def dist_to_line(pos, ref, theta, scale=1000):
         """
         The perpendicular distance between a point and a line, quantized
         to so we avoid floating-point issues later
@@ -258,7 +274,7 @@ class Battlefield(object):
         return int(scale*abs((v_dist-h_dist)))
 
     @staticmethod
-    def dist_through_square(perp_dist: float, theta: float) -> float:
+    def dist_through_square(perp_dist, theta):
         """
         So a line passes through a square, some distance from the center
         and at some angle. How long is the segment of the line in this
@@ -281,7 +297,7 @@ class Battlefield(object):
             return (B*(sin(theta)+cos(theta)) - perp_dist)/(sin(theta)*cos(theta))
         return 0
 
-    def determine_cover(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int]) -> float:
+    def determine_cover(self, start, end):
         """
         Is the target square in cover from this direction?
         :param start: (x,y) tuple, direction the shot is coming from
@@ -293,7 +309,7 @@ class Battlefield(object):
         blah = self.cache[end].cover.get((dx, dy))
         return blah or 1.
 
-    def fill_astar_cache(self, **kwargs) -> None:
+    def fill_astar_cache(self, **kwargs):
         all_squares = itertools.product(range(self.size[0]), range(self.size[1]))
         for a, b in tqdm.tqdm(itertools.combinations(all_squares, 2), **kwargs):
             if (a, b) in self.astar_cache or \
@@ -303,8 +319,7 @@ class Battlefield(object):
                 continue
             self.astar_cache[(a, b)] = self.astar_compute(a, b)
 
-    def astar_path_test(self, start: ty.Tuple[int, int], end: ty.Tuple[int, int],
-            max_distance=1e12, blocked=None):
+    def astar_path_test(self, start, end, max_distance=1e12, blocked=None):
         """
         First checks the cache to see if the result is valid.
         If one square is in the blocked set then farms out
@@ -328,18 +343,16 @@ class Battlefield(object):
         self.astar_cache[(start, end)] = (path, dist)
         return path, dist
 
-    def astar_path(self, start: ty.Tuple[int,int], end: ty.Tuple[int,int],
-            max_distance=1e12, blocked=None):
+    def astar_path(self, start, end, max_distance=1e12, blocked=None):
         '''
         A* pathfinding algorithm
         :param start: (x,y) tuple, start position
         :param end: (x,y) tuple, end position
         :param max_distance: the maximum distance you want to consider. Default 
             large number which means all
-        :param blocked: squares that can't be moved through for other reasons 
+        :param blocked: set of squares that can't be moved through for other reasons 
             (probably occupied)
-        :param _bypass: bypass the cache? Useful when building it
-        :returns: (path, total distance)
+        :returns: (list of (x,y) tuples, total distance)
         '''
         def heuristic(a,b):
             # TODO improve this
@@ -353,12 +366,20 @@ class Battlefield(object):
         frontier = lch.PriorityQueue(start)
         came_from = {start: (None,0)}
         blocked = blocked or set()
-        self.logger.trace(f'Computing a* from {start} to {end} dist {max_distance}')
 
         if heuristic(start, end) > max_distance:
             # best case distance is too far
             #self.logger.trace(f'Distance too far')
             return [], -1
+
+        if (start, end) in self.astar_cache or (end, start) in self.astar_cache:
+            p, d = self.astar_cache.get((start, end)) or self.astar_cache.get((end, start))
+            if all(s not in p for s in blocked): # TODO which order is faster?
+                self.logger.trace(f'Using cached path from {start} to {end}')
+                # cached and still valid
+                return p, d # worry about direction of p later
+
+        self.logger.trace(f'Computing a* from {start} to {end} dist {max_distance}')
 
         while not frontier.empty and (current := frontier.get()) != end:
             #self.log('trace', f'Current: {current} | {cost_so_far[current]:.1f}')
@@ -385,12 +406,10 @@ class Battlefield(object):
         path.append(start)
         path.reverse()
         self.logger.trace(f'Found path with length {came_from[end][1]}')
+        self.astar_cache[(start, end)] = path, came_from[end][1]
         return path, came_from[end][1]
 
-    def reachable(self,
-            start: ty.Tuple[int,int],
-            max_distance: int,
-            blocked=None) -> ty.Generator[ty.Tuple[int,int], None, None]:
+    def reachable(self, start, max_distance, blocked=None):
         '''
         Dijkstra's alg. This is a generator because it's only ever used as
         "for position in reachable"

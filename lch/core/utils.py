@@ -4,14 +4,60 @@ import logging
 import hashlib
 from functools import partial
 from enum import IntEnum
+import numpy as np
+import json
+import sqlite3 as sql
 
-__all__ = 'get_hash get_logger PriorityQueue'.split()
+db_conn = sql.connect('cache.db')
+
+__all__ = 'get_hash load_from_cache store_in_cache remove_from_cache get_logger PriorityQueue'.split()
 
 def get_hash(*args, hash_length=6):
+    """
+    Hash a couple of things together
+    :param *args: positional arguments, things to hash
+    :param hash_length: how many characters to return, default 6
+    :returns: str, hashed things
+    """
     m = hashlib.sha256()
     for arg in args:
         m.update(str(arg).encode())
     return m.hexdigest()[:hash_length]
+
+def load_from_cache(table, _hash):
+    """
+    Get an item from a cache
+    :param cache: str, the name of the cache file to look in
+    :param _hash: str, the hash of the thing you want
+    :returns: hopefully the cached thing
+    """
+    for row in db_conn.execute(f'SELECT * FROM {table} WHERE hash=?;', (_hash,)):
+        return row
+
+def store_in_cache(cache, _hash, thing):
+    """
+    Store an item in the db
+    :param cache: str, the name of the cache you want to store in
+    :param _hash: the hash of the thing
+    :param thing: a tuple to store
+    :returns: None
+    """
+    if not isinstance(thing, tuple):
+        raise ValueError(f'Can only encode tuples, not {type(thing)}')
+    if thing[0] != _hash:
+        thing = (_hash, *thing)
+    qmark = ','.join('?'*len(thing))
+    db_conn.execute(f'INSERT INTO {cache} VALUES ({qmark});', thing)
+    db_conn.commit()
+
+def remove_from_cache(cache, _hash, key='hash'):
+    """
+    Remove an item from the db, probably an AI getting purged for losing
+    :param cache: str, the name of the cache
+    :param _hash: str, the hash of the thing
+    :returns: None
+    """
+    db_conn.execute(f'DELETE FROM {cache} WHERE {key}=?;', (_hash,))
 
 class LogLevels(IntEnum):
     TRACE = 0

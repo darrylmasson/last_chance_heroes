@@ -1,11 +1,13 @@
 import lch
 
+NoRangedWeaponHash = 'bb5d1b'
+
 class Model(object):
     """
     """
     def __init__(self, move=None, rs=None, rc=None, ms=None, mc=None, dodge=None,
             max_health=None, mw=None, armor=None, pos_x=-1, pos_y=-1, status=None,
-            rw='NoRangedWeapon', current_health=None, team=None, _hash=None):
+            rw=None, current_health=None, team=None, _hash=None):
         self.move = move
         self.rs = rs
         self.rc = rs
@@ -21,6 +23,7 @@ class Model(object):
         self.armor = armor
         self.team = team
         self.hash = _hash or lch.get_hash(*map(lambda s : str(s).encode(), self.skills))
+        self.game_hash = self.hash # store separately for reasons
 
     def __str__(self):
         return f'{self.hash}, pos {self.position}, status {self.status}'
@@ -28,40 +31,64 @@ class Model(object):
     def __eq__(self, rhs):
         return self.hash == rhs.hash
 
+    @staticmethod
+    def create_table(conn):
+        """
+        Create the appropriate table in the provided database
+        """
+        try:
+            conn.execute("""CREATE TABLE model (
+                hash TEXT PRIMARY KEY NOT NULL,
+                move INTEGER,
+                rs INTEGER,
+                rc INTEGER,
+                ms INTEGER,
+                mc INTEGER,
+                max_health INTEGER,
+                dodge INTEGER,
+                armor INTEGER);""")
+        except Exception as e:
+            pass
+
     @property
     def skills(self):
-        return (self.move, self.rs, self.rc,
-                self.ms, self.mc, self.max_health, self.dodge,
-                self.armor)
+        return (self.move, self.rs, self.rc, self.ms, self.mc, self.max_health, 
+                self.dodge, self.armor)
 
     def encode(self):
         """
         Returns a db-serializable tuple
         """
-        return (self.hash, self.move, self.rs, 
-                self.rc, self.ms, self.mc,
-                self.max_health, self.current_health, self.mw.name,
-                self.rw.name, self.dodge, self.position[0],
-                self.position[1], self.status, self.armor, self.team.hash)
+        return (self.hash, *self.skills)
 
-    @staticmethod
-    def decode(*args):
+    @classmethod
+    def from_hash(cls, _hash):
+        args = lch.load_from_cache('model', _hash)
+        return cls.from_tuple(args)
+
+    @classmethod
+    def from_tuple(cls, args):
         """
         The reverse of encode
         """
-        _hash, move, rs, rc, ms, mc, max_health, current_health, mw, rw, dodge, pos_x, pos_y, status, armor, team_hash = args
-        return Model(_hash=_hash, move=move, rs=rs, ms=ms, max_health=max_health,
-                current_health=current_health, dodge=dodge, pos_x=pos_x, pos_y=pos_y,
-                mw=lch.get_weapon(mw), rw=lch.get_weapon(rw), status=status,
-                armor=armor, team=lch.get_team(team_hash))
+        _hash, move, rs, rc, ms, mc, max_health, dodge, armor = args
+        return cls(_hash=_hash, move=move, rs=rs, ms=ms, rc=rc, mc=mc,
+                max_health=max_health, dodge=dodge, armor=armor)
 
-    def possible_actions(self, allies, enemies, bf):
+    def get_snapshot(self):
+        return (self.game_hash, self.current_health, self.status, *self.position)
+
+    def load_snapshot(self, snap):
+        _, self.current_health, self.status, x, y = snap
+        self.position = (x,y)
+
+    def generate_actions(self, friendly_occupied, enemies, bf):
         if self.status != 'ready':
             return []
         self.logger.trace(f'Generating actions for {self}')
-        enemy_locations = enemies.locations()
-        occupied = enemy_locations | self.team.locations(exclude=self)
-        enemy_adjacent = bf.adjacent(enemy_locations)
+        enemy_positions = enemies.positions()
+        enemy_adjacent = bf.adjacent(enemy_positions)
+        occupied = friendly_occupied | enemy_positions
 
         actions = []
         action_kwargs = self.evaluate_position(None, enemies, bf, occupied)
@@ -73,7 +100,7 @@ class Model(object):
             return actions
 
         # second, shoot without moving
-        if self.rw.hash != '98afbd':
+        if self.rw.hash != NoRangedWeaponHash:
             for e in enemies:
                 dist, obs = bf.los_range(self.position, e.position)
                 if dist < self.rw.range:
@@ -81,8 +108,6 @@ class Model(object):
 
         # move and handle actions
         for pos in bf.reachable(self.position, self.move, occupied):
-            if pos in occupied:
-                continue
             action_kwargs = self.evaluate_position(pos, enemies, bf, occupied)
             if pos in enemy_adjacent:
                 for enemy in enemies:
@@ -90,7 +115,8 @@ class Model(object):
                         actions.append(lch.ChargeAction(model=self, target=enemy, move_destination=pos, **action_kwargs))
             else:
                 actions.append(lch.MoveAction(model=self, target=None, move_destination=pos, **action_kwargs))
-                if self.rw.hash != '98afbd':
+                if self.rw.hash != NoRangedWeaponHash:
+                    # NoRangedWeapon hash
                     for e in enemies:
                         dist, obs = bf.los_range(pos, e.position)
                         if dist <= self.rw.range:
