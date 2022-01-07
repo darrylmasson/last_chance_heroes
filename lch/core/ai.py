@@ -2,14 +2,75 @@ import lch
 import numpy as np
 import io
 
-__all__ = 'AI SimpleAI'.split()
+__all__ = 'AI Random DenseMultilayer'.split()
+
+def rand(shape, _min=-2, _max=-2):
+    # a wrapper abound np.random.random
+    return (_max - _min)*np.random.random(size=shape) + _min
 
 class AI(object):
     """
     A base class implementing some common things
     """
-    def __init__(self):
-        pass
+    version = "0.0.1"
+    dtype = [
+            ('n_actions', np.float32),
+            ('shootable_targets', np.float32),
+            ('chargeable_targets', np.float32),
+            ('can_shoot_back', np.float32),
+            ('can_charge_back', np.float32),
+            ('target_has_activated', np.int8),
+            ('remaining_friendly_actions', np.int8),
+            ('remaining_enemy_actions', np.int8),
+            ('chance_to_hit', np.float32),
+            ('threat_dist', np.float32),
+            ('f_threat_move', np.float32),
+            ('f_threat_rs', np.float32),
+            ('f_threat_rc', np.float32),
+            ('f_threat_ms', np.float32),
+            ('f_threat_mc', np.float32),
+            ('f_threat_ch', np.float32),
+            ('f_threat_dodge', np.float32),
+            ('f_threat_armor', np.float32),
+            ('f_threat_mw_attacks', np.float32),
+            ('f_threat_mw_punch', np.float32),
+            ('f_threat_mw_min_dmg', np.float32),
+            ('f_threat_mw_max_dmg', np.float32),
+            ('f_threat_rw_class', np.float32),
+            ('f_threat_rw_range', np.float32),
+            ('f_threat_rw_attacks', np.float32),
+            ('f_threat_rw_punch', np.float32),
+            ('f_threat_rw_min_dmg', np.float32),
+            ('f_threat_rw_max_dmg', np.float32),
+            ('e_threat_move', np.float32),
+            ('e_threat_rs', np.float32),
+            ('e_threat_rc', np.float32),
+            ('e_threat_ms', np.float32),
+            ('e_threat_mc', np.float32),
+            ('e_threat_ch', np.float32),
+            ('e_threat_dodge', np.float32),
+            ('e_threat_armor', np.float32),
+            ('e_threat_mw_attacks', np.float32),
+            ('e_threat_mw_punch', np.float32),
+            ('e_threat_mw_min_dmg', np.float32),
+            ('e_threat_mw_max_dmg', np.float32),
+            ('e_threat_rw_class', np.float32),
+            ('e_threat_rw_range', np.float32),
+            ('e_threat_rw_attacks', np.float32),
+            ('e_threat_rw_punch', np.float32),
+            ('e_threat_rw_min_dmg', np.float32),
+            ('e_threat_rw_max_dmg', np.float32),
+            ]
+
+    def __init__(self, _hash=None, parent_hash=None, **kwargs):
+        for k in self.fields():
+            setattr(self, k, kwargs[k])
+
+        self.hash = _hash or lch.get_hash(*[
+            kwargs[k].tobytes().hex()
+            if isinstance(kwargs[k], np.ndarray) else kwargs[k]
+            for k in self.fields()])
+        self.parent_hash = parent_hash or '0'*6
 
     def __eq__(self, rhs):
         return self.hash == rhs.hash
@@ -26,22 +87,23 @@ class AI(object):
             pass
 
     @classmethod
-    def fields(cls):
+    def base_fields(cls):
+        """
+        Returns a list of the fields this class uses
+        """
         raise NotImplementedError()
+
+    def fields(self):
+        """
+        Returns a list of specific fields this instance uses. Might be different from
+        base_fields in some situations, so we allow that here.
+        """
+        return self.base_fields()
 
     @staticmethod
     def from_hash(_hash):
         args = lch.load_from_cache('ai', _hash)
         return getattr(lch, args[2]).from_tuple(args)
-
-    def encode(self):
-        """
-        Encodes self into a database-serializable tuple with format (hash, parent_hash
-        class name, blob of np-compressed data)
-        """
-        with io.BytesIO() as f:
-            np.savez_compressed(f, **{k: getattr(self, k) for k in self.fields()})
-            return (self.hash, self.parent_hash, self.__class__.__name__, f.getvalue())
 
     @classmethod
     def from_tuple(cls, args):
@@ -52,90 +114,45 @@ class AI(object):
         _hash, parent_hash, _, blob = args
         with io.BytesIO(blob) as f:
             data = np.load(f)
+            fields = data['fields']
             return cls(_hash = _hash, parent_hash=parent_hash,
-                    **{k: data[k] for k in cls.fields()})
+                    **{k: data[k] for k in fields})
 
-class SimpleAI(AI):
-    """
-    A very simple ML ai, one hidden layer with 12 nodes, 8 input fields
-    """
-    nodes = 12
-    dtype = [
-            ('n_actions', np.float32),
-            ('shootable_targets', np.float32),
-            ('chargeable_targets', np.float32),
-            ('can_shoot_back', np.float32),
-            ('can_charge_back', np.float32),
-            ('chance_to_hit', np.float32),
-            ('average_damage', np.float32),
-            ('target_health', np.float32)
-            ]
-
-    def __init__(self,
-            hidden_controls=None, hidden_bias=None,
-            output_controls=None, output_bias=None,
-            top_n=None, _hash=None, parent_hash=None,
-            games=None, generations=None):
-        self.hidden_controls = hidden_controls
-        self.hidden_bias = hidden_bias
-
-        self.output_controls = output_controls
-        self.output_bias = output_bias
-
-        self.top_n = top_n
-        self.hash = _hash or lch.get_hash(
-                self.hidden_controls.tobytes().hex(),
-                self.hidden_bias.tobytes().hex(),
-                self.output_controls.tobytes().hex(),
-                self.output_bias.tobytes().hex(),
-                self.top_n)
-        self.parent_hash = parent_hash or '0'*6
-
-        self.games = games or 0
-        self.generations = generations or 0
-
-    @classmethod
-    def from_scratch(cls):
+    def encode(self):
         """
-        Returns a new SimpleAI with random parameters
+        Encodes self into a database-serializable tuple with format (hash, parent_hash
+        class name, blob of np-compressed data)
         """
-        return cls(
-                hidden_controls = np.random.random(size=(cls.nodes, len(cls.dtype))),
-                hidden_bias = np.random.random(size=(cls.nodes, 1)),
-                output_controls = np.random.random(size=(1, cls.nodes)),
-                output_bias = np.random.random(size=(1,1)),
-                top_n = np.random.randint(3, 6))
+        with io.BytesIO() as f:
+            fields = np.array(self.fields(), dtype='U32')
+            np.savez_compressed(f, fields=fields,
+                    **{k: getattr(self, k) for k in fields})
+            return (self.hash, self.parent_hash, self.__class__.__name__, f.getvalue())
 
-    @classmethod
-    def fields(cls):
-        """
-        Returns a list of things to be serialized
-        """
-        return 'hidden_controls hidden_bias output_controls output_bias top_n games generations'.split()
-
-    def mutate(self, step=0.01, prob=0.5):
+    def mutate(self, step=0.1, prob=0.5):
         """
         Mutate into a child
-        :param step: how much to change parameters by, default 0.01
-        :param prob: the probability that a any one value changes, default 0.5
-        :returns: a hash of a new SimpleAI
+        :param step: how much to change parameters by, default 0.1
+        :param prob: the probability that any one value changes, default 0.5
+        :returns: a new *AI
         """
-        mask = np.random.random(size=self.hidden_controls.shape) > prob
-        hc_change = mask*step*(np.random.random(size=self.hidden_controls.shape) - 0.5)
-        mask = np.random.random(size=self.hidden_bias.shape) > prob
-        hb_change = mask*step*(np.random.random(size=self.hidden_bias.shape) - 0.5)
-        mask = np.random.random(size=self.output_controls.shape) > prob
-        oc_change = mask*step*(np.random.random(size=self.output_controls.shape) - 0.5)
-        mask = np.random.random(size=self.output_bias.shape) > prob
-        ob_change = mask*step*(np.random.random(size=self.output_bias.shape) - 0.5)
-        top_n_change = np.random.choice([-1,0,1], p=[step, 1-2*step, step]) * (np.random.random() > prob)
+        kwargs = {}
+        for k in self.fields():
+            x = getattr(self, k)
+            if isinstance(x, np.ndarray) and x.dtype == float:
+                # most parameters here
+                mask = np.random.random(size=x.shape) > prob
+                kwargs[k] = x + mask * step * rand(x.shape)
+            elif isinstance(x, int) or (isinstance(x, np.ndarray) and x.dtype == int):
+                # things like top_n here
+                c = [0,1] if x == 1 else [-1, 0, 1]
+                p = [1-step, step] if x == 1 else [step, 1-2*step, step]
+                kwargs[k] = x + np.random.choice(c, p=p)
+            else:
+                # no change till I figure this out
+                kwargs[k] = x
 
-        return self.__class__(hidden_controls = self.hidden_controls + hc_change,
-                    hidden_bias = self.hidden_bias + hb_change,
-                    output_controls = self.output_controls + oc_change,
-                    output_bias = self.output_bias + ob_change,
-                    top_n = min(1, self.top_n + top_n_change),
-                    parent_hash = self.hash)
+        return self.__class__(parent_hash = self.hash, **kwargs)
 
     def normalize_input(self, actions):
         """
@@ -143,80 +160,81 @@ class SimpleAI(AI):
         :param actions: a list of unencoded actions to normalize
         :returns: a np array of encoded and normalized actions
         """
+        # can't be a structured array because they count as 1d not 2d
         normed = np.zeros((len(actions), len(self.dtype)))
         for i,a in enumerate(actions):
             normed[i] = a.normalize()
 
         # number of possible actions
-        normed[:, 0] = np.log(len(normed))
+        idx = 0
+        normed[:, idx] = np.log(len(normed))
 
         # shootable targets
-        m = normed[:, 1] != 0
-        normed[m, 1] = np.log(normed[m, 1])
-        normed[~m, 1] = -1
+        idx += 1
+        m = normed[:, idx] != 0
+        normed[m, idx] = np.log(normed[m, idx])
+        normed[~m, idx] = -1
 
         # chargeable targets
-        m = normed[:, 2] != 0
-        normed[m, 2] = np.log(normed[m, 2])
-        normed[~m, 2] = -1
+        idx += 1
+        m = normed[:, idx] != 0
+        normed[m, idx] = np.log(normed[m, idx])
+        normed[~m, idx] = -1
 
         # can shoot back
-        m = normed[:, 3] != 0
-        normed[m, 3] = np.log(normed[m, 3])
-        normed[~m, 3] = -1
+        idx += 1
+        m = normed[:, idx] != 0
+        normed[m, idx] = np.log(normed[m, idx])
+        normed[~m, idx] = -1
 
         # can charge back
-        m = normed[:, 4] != 0
-        normed[m, 4] = np.log(normed[m, 4])
-        normed[~m, 4] = -1
+        idx += 1
+        m = normed[:, idx] != 0
+        normed[m, idx] = np.log(normed[m, idx])
+        normed[~m, idx] = -1
 
-        # hit prob
-        # already in [0,1), no normalization necessary
+        # target has activated
+        idx += 1
+        # already in [0,1]
 
-        # avg damage
-        m = normed[:, 6] != 0
-        normed[m, 6] = np.log(normed[m, 6])
-        normed[~m, 6] = 0
+        # remaining friendly actions
+        idx += 1
+        # low integer, no normalization needed
 
-        # target health
-        m = normed[:, 7] != 0
-        normed[m, 7] = np.log(normed[m, 7])
-        normed[~m, 7] = 0
+        # remaining enemy actions
+        idx += 1
+        # low integer, no normalization needed
 
+        # chance to hit
+        idx += 1
+        # already in [0,1)
+
+        # threat distance
+        idx += 1
+        normed[:, idx] /= lch.global_vars.get('bf_diag', np.hypot(24, 18))
+
+        # threat parameters already normalized
         return normed
 
-    @staticmethod
-    def rectified_linear(arr):
-        return np.maximum(arr, 0, out=arr)
-
-    @staticmethod
-    def logistic_sigmoid(arr):
-        return 1/(1+np.exp(-arr))
-
-    def activation_function_hidden(self, weighted_sum):
-        return self.rectified_linear(weighted_sum)
-
-    def activation_function_output(self, weighted_sum):
-        return self.rectified_linear(weighted_sum)
+    def process_one(self, vector):
+        """
+        Run one input vector through the NN. Input has shape (x, 1) so you can
+        directly do control @ vector without reshaping.
+        """
+        raise NotImplementedError()
 
     def select_action(self, actions):
         """
         Selects from the provided actions via ML magicks
         :param actions: list of Action objects
-        :returns: Action object that is the "best" one
+        :returns: one Action from the list
         """
         if len(actions) == 0:
-            return NoAction()
+            return lch.NoAction()
         normed = self.normalize_input(actions)
         prob = np.zeros(len(normed))
         for i,a in enumerate(normed):
-            hidden = (self.hidden_controls @ a.reshape((8,1))) + self.hidden_bias
-            hidden = self.activation_function_hidden(hidden)
-
-            output = (self.output_controls @ hidden) + self.output_bias
-            output = self.activation_function_output(output)
-            prob[i] = output
-
+            prob[i] = self.process_one(a.reshape((len(self.dtype), 1)))
         if self.top_n is None or self.top_n == 1:
             best_i = np.argmax(prob)
         else:
@@ -231,3 +249,122 @@ class SimpleAI(AI):
             best_i = np.random.choice(len(prob), p=p)
         return actions[best_i]
 
+    def take_enemy_action(self, action):
+        """
+        What did the enemy just do?
+        """
+        pass
+
+class Random(AI):
+    """
+    Selects randomly. "Artificial"? Yes. "Intelligence"? Behave yourself
+    """
+    @classmethod
+    def base_fields(cls):
+        return []
+
+    def select_action(self, actions):
+        return actions[np.random.choice(len(actions))]
+
+class DenseMultilayer(AI):
+    """
+    A simple ai with densly-connected layers
+    """
+    hidden_nodes = [64, 16]
+
+    @classmethod
+    def from_scratch(cls, **kwargs):
+        """
+        Returns a new AI with random parameters
+        """
+        output_shape = kwargs.get('output_shape', 1)
+        input_shape = kwargs.get('input_shape', len(cls.dtype))
+        kwargs = {
+                'top_n': np.random.randint(3,6),
+                'oc': rand((1, cls.hidden_nodes[-1])),
+                'ob': rand((output_shape, 1)),
+        }
+        for i, v in enumerate(cls.hidden_nodes):
+            cols = input_shape if i == 0 else cls.hidden_nodes[i-1]
+            kwargs[f'hc_{i}'] = rand((v, cols))
+            kwargs[f'hb_{i}'] = rand((v, 1))
+        return cls(**kwargs)
+
+    def fields(self):
+        n = range(len(self.hidden_nodes))
+        return 'oc ob top_n'.split() + [f'hc_{i}' for i in n] + [f'hb_{i}' for i in n]
+
+    def process_one(self, a):
+        hidden = a
+        for i in range(len(self.hidden_nodes)):
+            hidden = getattr(self, f'hc_{i}') @ hidden
+            hidden = activation_funcs['leaky_relu'](np.add(hidden, getattr(self, f'hb_{i}'), out=hidden))
+
+        output = self.oc @ hidden
+        output = activation_funcs['tanh'](np.add(output, self.ob, out=output))
+        return output
+
+def Recurrent(AI):
+    """
+    Now with some memory. Keeps track of own and enemies' actions
+    """
+    hidden_nodes = 12
+
+    def __init__(self, **kwargs):
+        raise NotImplementedError()
+        super().__init__(**kwargs)
+        self.last_friendly = []
+        self.last_enemy = []
+
+    @classmethod
+    def fields(cls):
+        return 'hc hb oc ob top_n friendly_recurrent enemy_recurrent friendly_threat enemy_threat memory'.split()
+
+    @classmethod
+    def from_scratch(cls):
+        return cls(
+                hc = rand((cls.hidden_nodes, len(cls.dtype))),
+                hb = rand((cls.hidden_nodes, 1)),
+                fr = rand((cls.hidden_nodes, len(cls.dtype))),
+                er = rand((cls.hidden_nodes, len(cls.dtype))),
+                oc = rand((1, cls.hidden_nodes)),
+                ob = rand((1,1)),
+                top_n = np.random.randint(3, 6),
+                memory = 1)
+
+    def evaluate_action(self, action):
+        hidden = self.hc @ action
+        for b in self.last_friendly:
+            hidden = np.add(hidden, self.fr @ b, out=hidden)
+        for b in self.last_enemy:
+            hidden = np.add(hidden, self.er @ b, out=hidden)
+        hidden = activation_funcs['leaky_relu'](np.add(hidden, self.hb, out=hidden))
+
+        output = self.oc @ hidden
+        output = activation_funcs['tanh'](np.add(output, self.ob, out=output))
+
+        return output[0]
+
+    def take_enemy_action(self, action):
+        self.last_enemy.append(self.normalize_input([action])[0])
+        if len(self.last_enemy) > self.memory:
+            self.last_enemy = self.last_enemy[-self.memory:]
+
+    def select_action(self, actions):
+        ret = super().select_action(actions)
+        self.last_friendly.append(self.normalize_input([ret])[0])
+        if len(self.last_friendly) > self.memory:
+            self.last_friendly = self.last_friendly[-self.memory:]
+        return ret
+
+
+# some activation functions. Most try to operate in-place to avoid
+# allocating new memory. Defined as a dict so we can mutate and reference easily
+activation_funcs = {
+        'relu': lambda arr: np.maximum(arr, 0, out=arr),
+        'linear': lambda arr: arr,
+        'logistic_sigmoid': lambda arr: 1/(1+np.exp(-arr)),
+        'tanh': lambda arr: np.tanh(arr, out=arr),
+        'leaky_relu': lambda arr: np.multiply(arr, 0.1, out=arr, where=arr<0),
+        'elu': lambda arr: np.expm1(arr, where=arr<0),
+        }

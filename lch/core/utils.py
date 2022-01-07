@@ -5,12 +5,16 @@ import hashlib
 from functools import partial
 from enum import IntEnum
 import numpy as np
-import json
 import sqlite3 as sql
+import os.path as osp
+import inspect
 
-db_conn = sql.connect('cache.db')
 
-__all__ = 'get_hash load_from_cache store_in_cache remove_from_cache get_logger PriorityQueue'.split()
+__all__ = 'get_hash load_from_cache store_in_cache cache_dir db_conn remove_from_cache get_logger PriorityQueue global_vars'.split()
+
+global_vars = {}
+cache_dir = osp.dirname(osp.dirname(osp.dirname(inspect.getfile(inspect.currentframe())))) + '/data'
+db_conn = sql.connect(osp.join(cache_dir, 'cache.db'))
 
 def get_hash(*args, hash_length=6):
     """
@@ -24,40 +28,40 @@ def get_hash(*args, hash_length=6):
         m.update(str(arg).encode())
     return m.hexdigest()[:hash_length]
 
-def load_from_cache(table, _hash):
+def load_from_cache(table, _hash, key=None):
     """
     Get an item from a cache
     :param cache: str, the name of the cache file to look in
     :param _hash: str, the hash of the thing you want
+    :param key: str, the key of the thing, default is "hash"
     :returns: hopefully the cached thing
     """
-    for row in db_conn.execute(f'SELECT * FROM {table} WHERE hash=?;', (_hash,)):
+    for row in db_conn.execute(f'SELECT * FROM {table} WHERE {key or "hash"}=?;', (_hash,)):
         return row
 
-def store_in_cache(cache, _hash, thing):
+def store_in_cache(cache, thing):
     """
     Store an item in the db
     :param cache: str, the name of the cache you want to store in
-    :param _hash: the hash of the thing
     :param thing: a tuple to store
     :returns: None
     """
     if not isinstance(thing, tuple):
         raise ValueError(f'Can only encode tuples, not {type(thing)}')
-    if thing[0] != _hash:
-        thing = (_hash, *thing)
     qmark = ','.join('?'*len(thing))
     db_conn.execute(f'INSERT INTO {cache} VALUES ({qmark});', thing)
     db_conn.commit()
 
-def remove_from_cache(cache, _hash, key='hash'):
+def remove_from_cache(cache, _hash, key=None):
     """
     Remove an item from the db, probably an AI getting purged for losing
     :param cache: str, the name of the cache
     :param _hash: str, the hash of the thing
+    :param key: str, the key of the thing, default is "hash"
     :returns: None
     """
-    db_conn.execute(f'DELETE FROM {cache} WHERE {key}=?;', (_hash,))
+    db_conn.execute(f'DELETE FROM {cache} WHERE {key or "hash"}=?;', (_hash,))
+    db_conn.commit()
 
 class LogLevels(IntEnum):
     TRACE = 0

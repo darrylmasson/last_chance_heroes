@@ -5,7 +5,9 @@ __all__ = 'Team'.split()
 
 class Team(object):
     """
-    Teams are not cached in the same db as models/weapons
+    The primary way of creating teams is by calling from_hash, or from_tuple if
+    you're populating the cache with new teams. __init__ isn't really intended for
+    "user" use, but it takes hashes rather than instances.
     """
     MAX_TEAM_SIZE=6
 
@@ -13,6 +15,7 @@ class Team(object):
         self.models = models
         self.hash = _hash or lch.get_hash(*(m.hash for m in models))
         self.game_hash = lch.get_hash(self.hash, *(m.name for m in models))
+        lch.global_vars[self.game_hash] = self
         self.logger = lch.get_logger('team', self.hash)
         self.AI = ai
         for m in self.models:
@@ -60,9 +63,12 @@ class Team(object):
             model = lch.Model.from_hash(args[i])
             model.name = args[i+1]
             model.mw = lch.Weapon.from_hash(args[i+2])
+            model.mw.owner = model
             model.rw = lch.Weapon.from_hash(args[i+3])
+            model.rw.owner = model
             model.game_hash = lch.get_hash(model.hash, model.name)
             models.append(model)
+            lch.global_vars[model.game_hash] = model
         return cls(models=models, _hash=_hash)
 
     def generate_actions(self, enemies, bf):
@@ -95,6 +101,9 @@ class Team(object):
                 continue
             ret.append(m.position)
         return set(ret)
+
+    def remaining_actions(self):
+        return sum(1 if m.status == 'ready' else 0 for m in self.models)
 
     def adjacent(self, bf):
         ret = set()

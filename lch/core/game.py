@@ -1,13 +1,19 @@
 import lch
 import sqlite3 as sql
-import argparse
+import time
+
 
 __all__ = 'Game'.split()
 
 class Game(object):
     """
+    The master class representing one game between two teams on one battlefield
+    :param teams: an iterable containing two hashes of teams stored in the cache
+    :param ais: an iterable containing two hashes of AIs stored in the cache
+    :param bf: a Battlefield instance
+    :param store: bool, store a replay of this game. Default False.
     """
-    def __init__(self, teams, ais, bf):
+    def __init__(self, teams, ais, bf, store=False):
         self.bf = bf
         self.teams = list(map(lch.Team.from_hash, teams))
         self.teams[0].AI = lch.AI.from_hash(ais[0])
@@ -21,19 +27,24 @@ class Game(object):
         self.hash = lch.get_hash(bf.hash, *teams, *ais)
         self.logger = lch.get_logger('game', self.hash)
         self.logger.debug(f'Game based on {bf.hash} {teams[0]} {teams[1]}')
-        self.db_setup()
+        self.store = store
         # setup initial conditions
+        self.db_setup()
         self.replay = []
         for team in self.teams:
             for model in team.models:
                 self.add_to_replay(0, 0, model.get_snapshot())
 
     def __del__(self):
+        if not self.store:
+            return
         self.connection.executemany('INSERT INTO replay VALUES (?,?,?,?,?,?,?);', self.replay)
         self.connection.commit()
         self.connection.close()
 
     def db_setup(self):
+        if not self.store:
+            return
         self.connection = sql.connect(f'games/game_{self.hash}.db')
         self.connection.execute("""CREATE TABLE battlefield (
             x INTEGER,
@@ -59,7 +70,6 @@ class Game(object):
 
     def add_to_replay(self, turn_i, step, snapshot):
         self.replay.append((turn_i, step, *snapshot))
-        #        (turn_i, step, *snapshot))
 
     def start_of_turn(self, turn_i):
         self.logger.debug(f'Starting turn {turn_i}')
@@ -91,6 +101,7 @@ class Game(object):
                 if len(actions) > 0:
                     self.logger.trace(f'Turn {turn_i} team {t} actions {len(actions)}')
                     action = self.teams[t].AI.select_action(actions)
+                    self.teams[t^1].AI.take_enemy_action(action)
                     action.engage()
 
                 # save current state
@@ -110,14 +121,15 @@ class Game(object):
             if self.determine_victory(i):
                 break
         w = int(self.teams[0].strength() < self.teams[1].strength())
-        self.connection.commit()
         return self.teams[w].AI.hash, self.teams[w^1].AI.hash
 
 if __name__ == '__main__':
-    team = ['37077a']*2
-    ais = ['05253e', '083020']
+    team = ['8f74e6', '8f0bbc']
+    ais = ['6edfda', '6edfda']
     size_x, size_y = 24,18
+    t_start = time.perf_counter()
     g = Game(team, ais, lch.Battlefield(size_x, size_y, lch.Forest(size_x, size_y)))
-    print('Starting game')
+    print(f'Starting game, setup took {time.perf_counter()-t_start:.2f} s')
+    t_start = time.perf_counter()
     g.game_loop()
-    print('All done')
+    print(f'All done, game took {time.perf_counter()-t_start:.2f} s')

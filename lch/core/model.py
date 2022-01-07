@@ -31,6 +31,16 @@ class Model(object):
     def __eq__(self, rhs):
         return self.hash == rhs.hash
 
+    @property
+    def threat(self):
+        """
+        Properties that go into the threat assessment. Basically skills but current
+        instead of max health and normalized
+        """
+        return (self.move * 0.1, self.rs * 0.01, self.rc * 0.05, self.ms * 0.01,
+                self.mc * 0.05, self.current_health * 0.1, self.dodge * 0.01,
+                self.armor * 0.1)
+
     @staticmethod
     def create_table(conn):
         """
@@ -112,15 +122,14 @@ class Model(object):
             if pos in enemy_adjacent:
                 for enemy in enemies:
                     if enemy.position == pos:
-                        actions.append(lch.ChargeAction(model=self, target=enemy, move_destination=pos, **action_kwargs))
+                        actions.append(lch.ChargeAction(model=self, target=enemy, move_dest=pos, **action_kwargs))
             else:
-                actions.append(lch.MoveAction(model=self, target=None, move_destination=pos, **action_kwargs))
-                if self.rw.hash != NoRangedWeaponHash:
-                    # NoRangedWeapon hash
+                actions.append(lch.MoveAction(model=self, target=None, move_dest=pos, **action_kwargs))
+                if self.rw.hash != NoRangedWeaponHash and not isinstance(self.rw, lch.HeavyWeapon):
                     for e in enemies:
                         dist, obs = bf.los_range(pos, e.position)
                         if dist <= self.rw.range:
-                            actions.append(lch.SnapShotAction(model=self, target=e, move_destination=pos, obstruction=obs, **action_kwargs))
+                            actions.append(lch.SnapShotAction(model=self, target=e, move_dest=pos, obstruction=obs, **action_kwargs))
 
         return actions
 

@@ -62,6 +62,8 @@ class Battlefield(object):
                 "Specify at least one way of determining terrain")
         self.cache = {}
         self.size = (size_x, size_y)
+        lch.global_vars['bf_size'] = (size_x, size_y)
+        lch.global_vars['bf_diag'] = sqrt(size_x**2 + size_y**2)
         # first, generate terrain
         if terrain_func is not None:
             for x in range(size_x):
@@ -130,10 +132,21 @@ class Battlefield(object):
             if sq.move_scale != 1 or sq.los_scale != 1:
                 l.append((x, y, sq.move_scale, sq.los_scale))
         self.hash = lch.get_hash(','.join(map(str,l)))
+        lch.global_vars[self.hash] = self
         self.logger = lch.get_logger('battlefield', self.hash)
         self.logger.trace(f'BF: {" | ".join(map(str, l))}')
         self.astar_cache = {}
         self.los_cache = {}
+        self.los_cache_hits = 0
+        self.astar_cache_hits = 0
+
+    def __del__(self):
+        #print(f'LOS cache: {self.los_cache_hits} hits, {len(self.los_cache)} misses')
+        #print(f'A* cache: {self.astar_cache_hits} hits, {len(self.astar_cache)} misses')
+        try:
+            del lch.global_vars[self.hash]
+        except:
+            pass
 
     def encode(self):
         """
@@ -209,6 +222,7 @@ class Battlefield(object):
         # check the cache
         if (a := self.los_cache.get((start, end))) is not None or \
                 (b := self.los_cache.get((end, start))) is not None:
+            self.los_cache_hits += 1
             return a or b
 
         distance = sqrt((start[0]-end[0])**2 + (start[1]-end[1])**2)
@@ -216,16 +230,13 @@ class Battlefield(object):
             # squares are adjacent
             return distance, self.cache[start].los_cost[end]
         theta = atan2(end[1]-start[1], end[0]-start[0])
-        obstruction = self.cache[start].los_scale*self.dist_through_square(0, theta)*0.5
+        obstruction = self.cache[start].los_scale*0.5
         for square in self.straight_line(start, end):
-            #dist = dist_to_line(square, start, theta)
-            #obstruction += self.dist_through_square(dist, theta)*self.cache[current].los_scale
             # TODO walk before run
             obstruction += self.cache[square].los_scale
         # we add too much in the previous step for the last square because
         # we only need to cross half
-        # TODO walk before run
-        #obstruction -= self.cache[end].los_scale*self.dist_through_square(0, theta)*0.5
+        obstruction -= self.cache[end].los_scale*0.5
         self.los_cache[(start, end)] = distance, obstruction
         return distance, obstruction
 
@@ -272,30 +283,6 @@ class Battlefield(object):
         v_dist = cos(theta)*(pos[1]-ref[1])
         h_dist = sin(theta)*(pos[0]-ref[0])
         return int(scale*abs((v_dist-h_dist)))
-
-    @staticmethod
-    def dist_through_square(perp_dist, theta):
-        """
-        So a line passes through a square, some distance from the center
-        and at some angle. How long is the segment of the line in this
-        square?
-        :param perp_dist: float, distance from the line to the center of the square
-        :param theta: angle to the horizontal
-        :returns: float, the length of the line in the square in (0, sqrt(2)]
-        """
-        if perp_dist == 0:
-            if theta/pi < 1/4 or theta/pi > 7/4 or 3/4 < theta/pi < 5/4:
-                return abs(1/cos(theta))
-            else:
-                return abs(1/sin(theta))
-        elif condition:
-            theta = theta % (pi/4)
-            B = abs(perp_dist/cos(theta))
-            return perp_dist*tan(theta) + (1-B)/sin(theta)
-        else:
-            B = 0.5  # grid size
-            return (B*(sin(theta)+cos(theta)) - perp_dist)/(sin(theta)*cos(theta))
-        return 0
 
     def determine_cover(self, start, end):
         """
@@ -377,6 +364,7 @@ class Battlefield(object):
             if all(s not in p for s in blocked): # TODO which order is faster?
                 self.logger.trace(f'Using cached path from {start} to {end}')
                 # cached and still valid
+                self.astar_cache_hits += 1
                 return p, d # worry about direction of p later
 
         self.logger.trace(f'Computing a* from {start} to {end} dist {max_distance}')
