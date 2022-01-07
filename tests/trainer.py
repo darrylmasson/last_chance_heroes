@@ -8,7 +8,7 @@ from concurrent.futures import ProcessPoolExecutor as pool_exec
 import signal
 from collections import defaultdict
 
-def play_game(game):
+def play(game):
     return game.game_loop()
 
 class SignalHandler(object):
