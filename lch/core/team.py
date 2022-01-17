@@ -22,6 +22,9 @@ class Team(object):
             m.team = self
             m.logger = self.logger
 
+    def __eq__(self, rhs):
+        return self.game_hash == rhs.game_hash
+
     @classmethod
     def create_table(cls, conn):
         cmd = "CREATE TABLE team (hash TEXT PRIMARY KEY NOT NULL"

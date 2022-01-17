@@ -8,9 +8,10 @@ def empty_bf(*args):
 class Forest(object):
     def __init__(self, size_x, size_y):
         self.tree_locations = set()
-        num_trees = random.randint(20, 80)
+        area = (size_x-1) * (size_y-1)
+        num_trees = random.randint(int(area*0.1), int(area*0.33))
         while len(self.tree_locations) < num_trees:
-            x, y = random.randint(1, size_x-1), random.randint(1, size_y-1)
+            x, y = random.randint(1, size_x-2), random.randint(1, size_y-2)
             self.tree_locations.add((x,y))
 
     def __call__(self, x, y):

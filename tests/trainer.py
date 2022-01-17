@@ -22,30 +22,45 @@ class SignalHandler(object):
 
 sh = SignalHandler()
 
-def do_generation(seed_hash, teams, ais, rounds, workers):
+def generation_multithread(teams, ais, rounds, workers):
+    results = defaultdict(int)
+    n_games = (rounds * len(ais) * (len(ais)-1) // 2)
+    while sh.run == True:
+        for _ in range(rounds):
+            size_x, size_y = 20, 12
+            bf = lch.Battlefield(size_x, size_y, lch.Forest(size_x, size_y))
+            games = []
+            for ai in itertools.combinations(ais, 2):
+                # generate a game of each AI against each other AI on this map
+                games.append(lch.Game(teams, ai, bf))
+        try:
+            with pool_exec(max_workers=workers) as executor:
+                for (i,j) in executor.map(play, games):
+                    results[i] += 1
+                    if not sh.run:
+                        break
+        except Exception as e:
+            tqdm.tqdm.write(f'Caught a {type(e)}: {e}, continuing')
+        if sum(results.values()) == n_games:
+            break
+    return results
+
+def generation_singlethread(teams, ais, rounds):
     results = defaultdict(int)
     games = []
     for _ in range(rounds):
         # generate a map
-        size_x, size_y = 24, 18
+        size_x, size_y = 20, 12
         bf = lch.Battlefield(size_x, size_y, lch.Forest(size_x, size_y))
 
         for ai in itertools.combinations(ais, 2):
             # generate a game of each AI against each other AI on this map
             games.append(lch.Game(teams, ai, bf))
 
-    if workers == 1:
-        it = tqdm.tqdm(games, leave=False, desc='Games')
-        for g in it:
-            results[g.game_loop()[0]] += 1
-            if not sh.run:
-                break
-    else:
-        with pool_exec(max_workers=workers) as executor:
-            for (i,j) in executor.map(play, games):
-                results[i] += 1
-                if not sh.run:
-                    break
+    for g in tqdm.tqdm(games, leave=False, desc='Games'):
+        results[g.game_loop()[0]] += 1
+        if not sh.run:
+            break
 
     return results
 
@@ -91,7 +106,10 @@ def main():
         ais = [ai.hash for ai in ais]
 
         # fight to the death for our amusement
-        results = do_generation(top_hash, teams, ais, args.rounds, args.threads)
+        if args.threads > 1:
+            results = generation_multithread(ais, teams, args.rounds, args.threads)
+        else:
+            results = generation_singlethread(ais, teams, args.rounds)
 
         top_hash, top_wins = None, 0
         for k, v in results.items():

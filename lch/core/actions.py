@@ -203,6 +203,9 @@ class MoveAction(Action):
     def engage(self):
         self.move_model()
 
+    def __str__(self):
+        return f'Move {self.model.name} to {self.move_destination}'
+
 class ShootAction(Action):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -213,6 +216,9 @@ class ShootAction(Action):
     def engage(self):
         self.attack('ranged')
 
+    def __str__(self):
+        return f'Shoot {self.target.name} at {self.target.position}'
+
 class MeleeAction(Action):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -220,6 +226,9 @@ class MeleeAction(Action):
 
     def engage(self):
         self.attack('melee')
+
+    def __str__(self):
+        return f'Stab {self.target.name}'
 
 class SnapShotAction(MoveAction, ShootAction):
     def __init__(self, **kwargs):
@@ -229,6 +238,9 @@ class SnapShotAction(MoveAction, ShootAction):
         self.move_model()
         self.attack('ranged')
 
+    def __str__(self):
+        return f'Move {self.model.name} to {self.move_destination} and shoot {self.target.name} at {self.target.position}'
+
 class ChargeAction(MoveAction, MeleeAction):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -236,4 +248,7 @@ class ChargeAction(MoveAction, MeleeAction):
     def engage(self):
         self.move_model()
         self.attack('melee')
+
+    def __str__(self):
+        return f'Move {self.model.name} to {self.move_destination} and stab {self.target.name} at {self.target.position}'
 

@@ -7,7 +7,7 @@ import tqdm
 __all__ = 'Battlefield'.split()
 
 
-class Location(object):
+class Square(object):
     """
     Simple struct to handle terrain stuff, and also which squares are adjacent
     """
@@ -68,14 +68,14 @@ class Battlefield(object):
         if terrain_func is not None:
             for x in range(size_x):
                 for y in range(size_y):
-                    self.cache[(x,y)] = Location(x, y, *terrain_func(x,y))
+                    self.cache[(x,y)] = Square(x, y, *terrain_func(x,y))
         else:
             for x, y, move, los in terrain_list:
-                self.cache[(x,y)] = Location(x, y, move, los)
+                self.cache[(x,y)] = Square(x, y, move, los)
             for x in range(size_x):
                 for y in range(size_y):
                     if (x,y) not in self.cache:
-                        self.cache[(x,y)] = Location(x, y, 1, 1)
+                        self.cache[(x,y)] = Square(x, y, 1, 1)
 
         # now, make it into a graph
         _adjacent = [ # CCW from +x
@@ -296,40 +296,6 @@ class Battlefield(object):
         blah = self.cache[end].cover.get((dx, dy))
         return blah or 1.
 
-    def fill_astar_cache(self, **kwargs):
-        all_squares = itertools.product(range(self.size[0]), range(self.size[1]))
-        for a, b in tqdm.tqdm(itertools.combinations(all_squares, 2), **kwargs):
-            if (a, b) in self.astar_cache or \
-                    (b, a) in self.astar_cache or \
-                    self.cache[a].move_scale == -1 or \
-                    self.cache[b].move_scale == -1:
-                continue
-            self.astar_cache[(a, b)] = self.astar_compute(a, b)
-
-    def astar_path_test(self, start, end, max_distance=1e12, blocked=None):
-        """
-        First checks the cache to see if the result is valid.
-        If one square is in the blocked set then farms out
-        for recomputing
-        """
-        blocked = blocked or set()
-        if (start, end) in self.astar_cache or (end, start) in self.astar_cache:
-            path, dist = self.astar_cache.get((start, end)) or \
-                    self.astar_cache.get((end, start))
-            for sq in path:
-                if sq in blocked:
-                    # this path is invalid, must recompute
-                    return self.astar_compute(start, end, max_distance, blocked)
-            self.logger.trace(f'Using cached path from {start} to {end}')
-            if path[0] == start:
-                return path, dist
-            # gotta swap the path
-            path.reverse()
-            return path, dist
-        path, dist = self.astar_compute(start, end, max_distance, blocked)
-        self.astar_cache[(start, end)] = (path, dist)
-        return path, dist
-
     def astar_path(self, start, end, max_distance=1e12, blocked=None):
         '''
         A* pathfinding algorithm
@@ -401,7 +367,7 @@ class Battlefield(object):
         '''
         Dijkstra's alg. This is a generator because it's only ever used as
         "for position in reachable"
-        :param start: (x,y) tuple, start location
+        :param start: (x,y) tuple, start coords
         :param max_distance: maximum distance to consider
         :param blocked: additional squares that cannot be passed through
         :yields: (x,y) positions that can be reached
