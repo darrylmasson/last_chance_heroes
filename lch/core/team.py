@@ -7,7 +7,7 @@ class Team(object):
     """
     The primary way of creating teams is by calling from_hash, or from_tuple if
     you're populating the cache with new teams. __init__ isn't really intended for
-    "user" use, but it takes hashes rather than instances.
+    "user" use.
     """
     MAX_TEAM_SIZE=6
 
@@ -77,7 +77,7 @@ class Team(object):
     def generate_actions(self, enemies, bf):
         actions = []
         for model in self.models:
-            friendlies = self.positions(exclude=model)
+            friendlies = self.coordinates(exclude=model)
             actions += model.generate_actions(friendlies, enemies, bf)
 
         return actions
@@ -97,12 +97,12 @@ class Team(object):
         # how many HP are left
         return sum(m.current_health for m in self.models)
 
-    def positions(self, exclude=None, include_dead=False):
+    def coordinates(self, exclude=None, include_dead=False):
         ret = []
         for m in self.models:
             if (exclude is not None and m == exclude) or (m.status == 'dead' and not include_dead):
                 continue
-            ret.append(m.position)
+            ret.append(m.coords)
         return set(ret)
 
     def remaining_actions(self):
@@ -113,7 +113,7 @@ class Team(object):
         for m in self.models:
             if m.status == 'dead':
                 continue
-            ret |= bf.adjacent(m.position)
+            ret |= bf.adjacent(m.coords)
         return ret
 
     def __iter__(self):

@@ -240,7 +240,7 @@ class AI(object):
         else:
             n = min(self.top_n, len(prob))
             cutoff = np.sort(prob)[-n]
-            prob[prob < cutoff] = 0
+            prob[(prob < cutoff) | np.isnan(prob)] = 0
             if (s := prob.sum()) == 0:
                 # whoops?
                 p = np.ones(len(prob))/len(prob)

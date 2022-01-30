@@ -2,6 +2,8 @@ import lch
 import typing as ty
 import random
 from enum import IntEnum
+from math import exp
+
 
 __all__ = 'Weapon RangedWeapon MeleeWeapon AssaultWeapon HeavyWeapon Pistol SMG Shotgun Rifle MG Sniper Knife Sword Axe'.split()
 
@@ -86,7 +88,7 @@ class Weapon(object):
     def avg_damage(self):
         return 0.5*sum(self.min_damage, self.max_damage)
 
-    def damage(self):
+    def damage(self, shot_distance):
         return random.randint(self.min_damage, self.max_damage)
 
 class MeleeWeapon(Weapon):
@@ -95,7 +97,7 @@ class MeleeWeapon(Weapon):
         self.range = 0
 
     def chance_to_hit(self, target, bf):
-        if self.owner.position not in bf.adjacent(target.position):
+        if self.owner.coords not in bf.adjacent(target.coords):
             return 0.
         return 0.5
 
@@ -108,30 +110,39 @@ class MeleeWeapon(Weapon):
 class RangedWeapon(Weapon):
     def penalty(self, move_distance, shot_distance):
         """
-        What is the penalty to hit if you move X squares? Return -1 if impossible.
+        What is the penalty to hit if you move X squares and shoot Y? Return None
+        if impossible.
         Split into penalties from wielder moving, shot distance, and number of shots
         :param move_distance: how far the wielder moved
         :param shot_distance: how far away the target is
-        :returns: int
+        :returns: (move penalty, range penalty, shots penalty)
         """
         if move_distance > 0 and isinstance(self, HeavyWeapon):
-            return -1
-        move_penalty = 0 if isinstance(self, AssaultWeapon) else self.owner.rs
+            return None
+        move_penalty = 0
+        if move_distance > 0 and not isinstance(self, AssaultWeapon):
+            move_penalty = move_distance/self.owner.move
 
-        shots_penalty = (self.attacks-1)**3  # TODO
+        shots_penalty = 0.05*(self.attacks-1)**3  # TODO
 
-        range_increments = shot_distance // self.range
+        range_increments = shot_distance / self.range
         if isinstance(self, AssaultWeapon):
             # first increment is free
-            range_penalty = max(range_increments-1, 0)*self.owner.rs
+            range_penalty = max(range_increments-1, 0)
         elif isinstance(self, HeavyWeapon):
-            # second increment is free, others cost
-            range_penalty = abs(range_increments-1)*self.owner.rs
+            if range_increments < 1:
+                # inside half range
+                range_penalty = 1-range_increments
+            elif range_increments > 2:
+                # outside 3x range
+                range_penalty = range_increments-2
+            else:
+                range_penalty = 0
         else:
             # first two are free
-            range_penalty = max(range_increments-2, 0)*self.owner.rs
+            range_penalty = max(range_increments-2, 0)
 
-        return move_penalty + range_penalty + shots_penalty
+        return (move_penalty, range_penalty, shots_penalty)
 
     @property
     def threat(self):
@@ -152,7 +163,8 @@ class SMG(AssaultWeapon):
     pass
 
 class Shotgun(AssaultWeapon):
-    pass
+    def damage(self, shot_distance):
+        return int(random.randint(self.min_damage, self.max_damage)*exp(-shot_distance/self.range))
 
 class Rifle(RangedWeapon):
     pass

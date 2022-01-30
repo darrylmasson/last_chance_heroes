@@ -17,28 +17,29 @@ class Square(object):
         :param y: the y coordinate, in [0, size_y)
         :param move_scale: float >= 1, how easy it is to move into this square.
             Larger numbers mean more difficult, -1 means impossible
-        :param los_scale: float >= 0, how easy it is to see through this square.
+        :param los_scale: float >= 1, how easy it is to see through this square.
             Larger numbers mean more difficult, -1 means impossible
         """
-        self.position = (x,y)
+        self.coords = (x,y)
         self.move_scale = move_scale
         self.los_scale = los_scale
         self.move_cost = {}
         self.los_cost = {}
         self.cover = {}
+        self.model = None
 
     def __str__(self):
-        return f"{self.position} | {self.move_scale:.1f}, {self.los_scale:.1f}"
+        return f"{self.coords} | {self.move_scale:.1f}, {self.los_scale:.1f}"
 
     def __repr__(self):
         return str(self)
 
     def __eq__(self, rhs):
-        return self.position == rhs.position
+        return self.coords == rhs.coords
 
 class Battlefield(object):
     """
-    The class handling positions and movement etc, this is where all
+    The class handling coordss and movement etc, this is where all
     the pathfinding etc algs are
     """
     def __init__(self,
@@ -101,14 +102,14 @@ class Battlefield(object):
                         a = -1
                     else:
                         a = (this_sq.move_scale + other.move_scale)*scale[adj%2]
-                    this_sq.move_cost[other.position] = a
-                    other.move_cost[this_sq.position] = a
+                    this_sq.move_cost[other.coords] = a
+                    other.move_cost[this_sq.coords] = a
                     if this_sq.los_scale == -1 or other.los_scale == -1:
                         a = -1
                     else:
                         a = (this_sq.los_scale + other.los_scale)*scale[adj%2]
-                    this_sq.los_cost[other.position] = a
-                    other.los_cost[this_sq.position] = a
+                    this_sq.los_cost[other.coords] = a
+                    other.los_cost[this_sq.coords] = a
         # now we check for hard corners by unlinking cardinal pairs around
         # an impassable square, like this:
         #
@@ -166,20 +167,24 @@ class Battlefield(object):
         size_x, size_y = tuples[0][:2]
         return cls(size_x, size_y, terrain_list=tuples[1:])
 
-    def adjacent(self, position):
+    @staticmethod
+    def distance(start, end):
+        return sqrt((start[0]-end[0])**2 + (start[1]-end[1])**2)
+
+    def adjacent(self, coords):
         """
         All squares adjacent to the input
-        :param position: (x,y) tuple or list of (x,y) tuples, the squares of interest
+        :param coords: (x,y) tuple or list of (x,y) tuples, the squares of interest
         :returns: set of (x,y) tuples
         """
-        if isinstance(position, tuple):
-            return set(k for k,v in self.cache[position].move_cost.items() if v != -1)
-        elif isinstance(position, (list, set)):
+        if isinstance(coords, tuple):
+            return set(k for k,v in self.cache[coords].move_cost.items() if v != -1)
+        elif isinstance(coords, (list, set)):
             ret = set()
-            for pos in position:
+            for pos in coords:
                 ret = ret | self.adjacent(pos)
-            return ret - set(position)
-        raise ValueError(f'Invalid position: {type(position)}, must be list or tuple')
+            return ret - set(coords)
+        raise ValueError(f'Invalid coords: {type(coords)}, must be list or tuple')
 
     def straight_line(self, start, end, penetrating=False):
         """
@@ -215,8 +220,8 @@ class Battlefield(object):
         """
         A to B as the crow (or bullet) flies, accounting for LOS blocking. Does
         a bunch of math to account for only crossing the corner of a square
-        :param start: (x,y) tuple, start position
-        :param end: (x,y) tuple, end position
+        :param start: (x,y) tuple, start coords
+        :param end: (x,y) tuple, end coords
         :returns: (float, float) tuple, LOS distance and amount of obstruction
         """
         # check the cache
@@ -225,27 +230,30 @@ class Battlefield(object):
             self.los_cache_hits += 1
             return a or b
 
-        distance = sqrt((start[0]-end[0])**2 + (start[1]-end[1])**2)
         if end in self.cache[start].los_cost:
             # squares are adjacent
-            return distance, self.cache[start].los_cost[end]
+            return self.cache[start].move_cost[end], self.cache[start].los_cost[end]
         theta = atan2(end[1]-start[1], end[0]-start[0])
         obstruction = self.cache[start].los_scale*0.5
         for square in self.straight_line(start, end):
-            # TODO walk before run
-            obstruction += self.cache[square].los_scale
-        # we add too much in the previous step for the last square because
-        # we only need to cross half
-        obstruction -= self.cache[end].los_scale*0.5
-        self.los_cache[(start, end)] = distance, obstruction
-        return distance, obstruction
+            if (x := self.cache[square].los_scale) < 0:
+                # hit a blocking square
+                obstruction = -1
+                break
+            obstruction += x
+        else:
+            # we add too much in the previous step for the last square because
+            # we only need to cross half
+            obstruction -= self.cache[end].los_scale*0.5
+        self.los_cache[(start, end)] = self.distance(start, end), obstruction
+        return self.distance(start, end), obstruction
 
     def evaluate_los(self, start, end):
         """
         How clear of a shot do you have from start to end? Evaluates both outside corners as well as one inside corner.
         If all three are obstructed then no bueno
-        :param start: (x,y) tuple, start position
-        :param end: (x,y) tuple, end position
+        :param start: (x,y) tuple, start coords
+        :param end: (x,y) tuple, end coords
         :returns:
         """
         raise NotImplementedError()
@@ -299,8 +307,8 @@ class Battlefield(object):
     def astar_path(self, start, end, max_distance=1e12, blocked=None):
         '''
         A* pathfinding algorithm
-        :param start: (x,y) tuple, start position
-        :param end: (x,y) tuple, end position
+        :param start: (x,y) tuple, start coords
+        :param end: (x,y) tuple, end coords
         :param max_distance: the maximum distance you want to consider. Default 
             large number which means all
         :param blocked: set of squares that can't be moved through for other reasons 
@@ -366,11 +374,11 @@ class Battlefield(object):
     def reachable(self, start, max_distance, blocked=None):
         '''
         Dijkstra's alg. This is a generator because it's only ever used as
-        "for position in reachable"
+        "for coords in reachable"
         :param start: (x,y) tuple, start coords
         :param max_distance: maximum distance to consider
         :param blocked: additional squares that cannot be passed through
-        :yields: (x,y) positions that can be reached
+        :yields: (x,y) coordss that can be reached
         '''
         frontier = lch.PriorityQueue(start)
         came_from = {start: (None, 0)}

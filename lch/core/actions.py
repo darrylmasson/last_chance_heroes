@@ -2,7 +2,7 @@ import lch
 from math import sqrt
 from scipy.stats import norm
 
-__all__ = 'Action NoAction MoveAction MeleeAction ShootAction SnapShotAction ChargeAction'.split()
+__all__ = 'Action NoAction MoveAction AttackAction MeleeAction ShootAction SnapShotAction ChargeAction'.split()
 
 def chance_to_hit_ranged(attacker, defender, obstruction=0, move_dist=0, shot_dist=0):
     """
@@ -13,9 +13,11 @@ def chance_to_hit_ranged(attacker, defender, obstruction=0, move_dist=0, shot_di
     :param moved: int, number of squares the attacker has moved
     :returns: float, chance to hit
     """
-    if (penalty := attacker.rw.penalty(move_dist, shot_dist)) < 0:
+    penalty = attacker.rw.penalty(move_dist, shot_dist)
+    if penalty is None:
         return 0
-    return norm.sf(defender.dodge, loc=attacker.rs-penalty, scale=attacker.rc)
+    penalty = sum(penalty)
+    return norm.sf(defender.dodge, loc=attacker.rs-penalty*attacker.rc, scale=attacker.rc)
 
 def chance_to_hit_melee(attacker, defender, charged=False, n_trials = 1000):
     """
@@ -35,64 +37,19 @@ def chance_to_hit_melee(attacker, defender, charged=False, n_trials = 1000):
     d = norm.rvs(loc=d_skill, scale=d_consistency, size=n_trials)
     return (a > d).sum()/n_trials
 
-def do_damage(defender, weapon, hits=1):
-    """
-    Do some damage against a defender with a weapon
-    :param defender: a Model
-    :param weapon: the Weapon in question
-    :param hits: how many times to roll damage
-    :returns: None
-    """
-    effective_armor = max(defender.armor - weapon.punch, 0)
-    for _ in range(hits):
-        damage = max(weapon.damage() - effective_armor, 0)
-        defender.current_health -= damage
-        if defender.current_health <= 0:
-            defender.status = 'dead'
-            defender.current_health = 0
-            break
-    return
-
-def ranged_combat_action(attacker, defender, obstruction=0, moved=0):
-    """
-    Do a ranged combat action
-    :param attacker: Model
-    :param defender: Model
-    :param obstruction: obstruction between the attacker and defender
-    :param moved: how far the attacker moved before attempting the shot
-    :returns: None
-    """
-    start, end = attacker.position, defender.position
-    shot_dist = sqrt((start[0]-end[0])**2 + (start[1]-end[1])**2)
-    if (penalty := attacker.rw.penalty(moved, shot_dist)) < 0:
-        return
-    skill = attacker.rs - penalty
-    hit_rolls = norm.rvs(loc=skill, scale=attacker.rc, size=attacker.rw.attacks)
-    hits = sum(hit_rolls > defender.dodge)
-
-    return do_damage(defender, attacker.rw, hits)
-
-def melee_combat_action(attacker, defender, charged=False):
-    skill = attacker.ms + (0 if not charged else attacker.mc)
-    attacks = attacker.mw.attacks
-    attack_roll = norm.rvs(loc=skill, scale=attacker.mc, size=attacks)
-    defense_roll = norm.rvs(loc=defender.ms, scale=defender.mc, size=attacks)
-    hits = sum(attack_roll > defense_roll)
-
-    return do_damage(defender, attacker.mw, hits)
-
 class Action(object):
     """
     See AI.dtype for more info about fields
     """
-    def __init__(self, model=None, target=None, move_dest=None, **kwargs):
+    bf = None
+    def __init__(self, model=None, target=None, move_dest=None, bf=None, **kwargs):
         self.model = model
         self.target = target
         self.move_dest = move_dest
-        self.move_dist = 0 if move_dest is None else sqrt((model.position[0]-move_dest[0])**2 + (model.position[1]-move_dest[1])**2)
-        start = move_dest or model.position
-        end = start if target is None else target.position
-        self.shot_dist = sqrt((start[0]-end[0])**2 + (start[1]-end[1])**2)
+        self.move_dist = 0 if move_dest is None else bf.astar_path(model.coords, move_dest)[1]
+        start = move_dest or model.coords
+        end = start if target is None else target.coords
+        self.shot_dist, self.obstruction = bf.los_range(start, end)
         for k in 'shootable_targets chargeable_targets can_shoot_back can_charge_back'.split():
             setattr(self, k, kwargs.pop(k, 0))
         self.hit_prob = 0
@@ -137,7 +94,7 @@ class Action(object):
         f_threat = self.model.threat
         f_threat_mw = self.model.mw.threat
         f_threat_rw = self.model.rw.threat
-        start = self.move_dest or self.model.position
+        start = self.move_dest or self.model.coords
         if self.target is None:
             e_threat = tuple([0]*len(f_threat))
             e_threat_mw = tuple([0]*len(f_threat_mw))
@@ -165,23 +122,6 @@ class Action(object):
             *e_threat_rw
         ])
 
-    def engage(self):
-        raise NotImplementedError()
-
-    def move_model(self):
-        self.model.status = "activated"
-        if not isinstance(self.move_dest, tuple):
-            raise ValueError(f'Move dest must be a tuple, not a {type(self.move_dest)}')
-        self.model.position = self.move_dest
-
-    def attack(self, attack_type):
-        self.model.status = 'activated'
-        if attack_type == 'ranged':
-            return ranged_combat_action(self.model, self.target, self.move_dist)
-        if attack_type == 'melee':
-            return melee_combat_action(self.model, self.target, isinstance(self, MoveAction))
-        raise NotImplementedError()
-
 class NoAction(Action):
     """
     In case we don't want to do anything
@@ -197,58 +137,28 @@ class NoAction(Action):
         raise NotImplementedError()
 
 class MoveAction(Action):
+    pass
+
+class AttackAction(Action):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.hit_prob = self.chance_to_hit()
 
-    def engage(self):
-        self.move_model()
+    def chance_to_hit(self):
+        return 0
 
-    def __str__(self):
-        return f'Move {self.model.name} to {self.move_destination}'
+class ShootAction(AttackAction):
+    def chance_to_hit(self, *args):
+        self.hit_prob = chance_to_hit_ranged(self.model, self.target,
+                self.obstruction, self.move_dist, self.shot_dist)
 
-class ShootAction(Action):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        if not hasattr(self, 'obstruction'):
-            self.obstruction = 0
-        self.hit_prob = chance_to_hit_ranged(self.model, self.target, self.obstruction, self.move_dist, self.shot_dist)
-
-    def engage(self):
-        self.attack('ranged')
-
-    def __str__(self):
-        return f'Shoot {self.target.name} at {self.target.position}'
-
-class MeleeAction(Action):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+class MeleeAction(AttackAction):
+    def chance_to_hit(self):
         self.hit_prob = chance_to_hit_melee(self.model, self.target, isinstance(self, MoveAction))
 
-    def engage(self):
-        self.attack('melee')
-
-    def __str__(self):
-        return f'Stab {self.target.name}'
-
 class SnapShotAction(MoveAction, ShootAction):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def engage(self):
-        self.move_model()
-        self.attack('ranged')
-
-    def __str__(self):
-        return f'Move {self.model.name} to {self.move_destination} and shoot {self.target.name} at {self.target.position}'
+    pass
 
 class ChargeAction(MoveAction, MeleeAction):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def engage(self):
-        self.move_model()
-        self.attack('melee')
-
-    def __str__(self):
-        return f'Move {self.model.name} to {self.move_destination} and stab {self.target.name} at {self.target.position}'
+    pass
 

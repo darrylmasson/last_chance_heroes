@@ -19,7 +19,7 @@ db_conn = sql.connect(osp.join(cache_dir, 'cache.db'))
 def get_hash(*args, hash_length=6):
     """
     Hash a couple of things together
-    :param *args: positional arguments, things to hash
+    :param *args: coordsal arguments, things to hash
     :param hash_length: how many characters to return, default 6
     :returns: str, hashed things
     """

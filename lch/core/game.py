@@ -1,6 +1,7 @@
 import lch
 import sqlite3 as sql
 import time
+from scipy.stats import norm
 
 
 __all__ = 'Game'.split()
@@ -16,12 +17,16 @@ class Game(object):
     def __init__(self, teams, ais, bf, store=False):
         self.bf = bf
         self.teams = list(map(lch.Team.from_hash, teams))
-        self.teams[0].AI = lch.AI.from_hash(ais[0])
-        self.teams[1].AI = lch.AI.from_hash(ais[1])
+        for i in range(2):
+            self.teams[i].AI = None if ais[i] is None else lch.AI.from_hash(ais[i])
         for i,model in enumerate(self.teams[0].models):
-            model.position = (0, i)
+            xy = (0, i)
+            model.coords = xy
+            self.bf.cache[xy].model = model
         for i,model in enumerate(self.teams[1].models):
-            model.position = (bf.size[0]-1, bf.size[1]-1-i)
+            xy = (bf.size[0]-1, bf.size[1]-1-i)
+            model.coords = xy
+            self.bf.cache[xy].model = model
         self.max_turns = 12
         self.winning_team = -1
         self.hash = lch.get_hash(bf.hash, *teams, *ais)
@@ -85,24 +90,109 @@ class Game(object):
             return True
         return False
 
+    def engage_action(self, action):
+        print(f'Engaging action for {action.model.name}')
+        action.model.status = 'activated'
+        if isinstance(action, lch.MoveAction):
+            print(f'Moving {action.model.name} from {action.model.coords} to {action.move_dest}')
+            self.move_model(action.model, action.move_dest)
+        if isinstance(action, lch.ShootAction):
+            print(f'{action.model.name} shooting at {action.target.name}')
+            self.shoot_action(action)
+        elif isinstance(action, lch.MeleeAction):
+            print(f'{action.model.name} stabbing {action.target.name}')
+            self.melee_action(action)
+
+    def move_model(self, model, destination):
+        model.coords = destination
+
+    def do_damage(self, defender, weapon, hits, shot_dist=0):
+        """
+        Do some damage against a defender with a weapon
+        :param defender: a Model
+        :param weapon: the Weapon in question
+        :param hits: how many times to roll damage
+        :returns: None
+        """
+        effective_armor = max(defender.armor - weapon.punch, 0)
+        tot_damage = 0
+        damage = []
+        for _ in range(hits):
+            damage.append(max(weapon.damage(shot_dist) - effective_armor, 0))
+            defender.current_health -= damage[-1]
+            if defender.current_health <= 0:
+                defender.status = 'dead'
+                defender.current_health = 0
+                defender.coords = (-1, -1)
+                print(f'Killed {defender.name}')
+                return f'killed {defender.name}'
+        s = f'Did {"/".join(map(str, damage))} to {defender.name}'
+        print(s)
+        return s
+
+    def shoot_action(self, action):
+        attacker = action.model
+        defender = action.target
+        start, end = attacker.coords, defender.coords
+        shot_dist = self.bf.distance(start, end)
+        penalty = attacker.rw.penalty(action.move_dist, action.shot_dist)
+        if penalty is None:
+            return "Can\'t move and shoot a heavy weapon"
+        print(f'Penalty: {penalty}')
+        attacks = attacker.rw.attacks
+        hit_rolls = norm.rvs(loc=attacker.rs, scale=attacker.rc, size=attacks)
+        target_num = defender.dodge + sum(penalty)*attacker.rc
+        hits = sum(hit_rolls > target_num)
+        hit_rolls = [f'{x:.1f}' for x in hit_rolls]
+        s = f'Attack skill {attacker.rs}/{attacker.rc}, rolls {hit_rolls}, target {target_num:.1f}. '
+        if hits == 0:
+            print(s + f"No hits")
+            return s + f"No hits"
+        s += f"{hits} hits, " + self.do_damage(defender, attacker.rw, hits, shot_dist)
+        print(s)
+        return s
+
+    def melee_action(self, action):
+        attacker = action.model
+        defender = action.target
+        charged = isinstance(action, lch.MoveAction)
+        bonus = attacker.mc * (action.move_dist > 0)
+        attacks = attacker.mw.attacks
+        attack_roll = norm.rvs(loc=attacker.ms, scale=attacker.mc, size=attacks) + bonus
+        defense_roll = norm.rvs(loc=defender.ms, scale=defender.mc, size=attacks)
+        hits = sum(attack_roll > defense_roll)
+        attack_roll = [f'{x:.1f}' for x in attack_roll]
+        defense_roll = [f'{x:.1f}' for x in defense_roll]
+        s = f'Skill {attacker.ms}/{attacker.mc} vs {defender.ms}/{defender.mc}, rolls {attack_roll}/{defense_roll} '
+        if hits == 0:
+            return s + f'no hits'
+        return s + f"{hits} hits, " + self.do_damage(defender, attacker.mw, hits)
+
+    def do_team_action(self, team_i):
+        """
+        Selects an action from an AI team
+        :param team_i: 0 or 1
+        :returns: None, or the Action that was taken
+        """
+        actions = self.teams[team_i].generate_actions(self.teams[team_i^1], self.bf)
+        if len(actions) == 0:
+            return None
+        action = self.teams[team_i].AI.select_action(actions)
+        self.engage_action(action)
+        action.model.status = 'activated'
+        return action
+
     def turn(self, turn_i):
-        other_team_actions = 1 # start nonzero
+        other_team_action = 1 # start nonzero
         turn_finished = False
         step = 0
         while not turn_finished:
             for t in range(2):
-                actions = self.teams[t].generate_actions(self.teams[t^1], self.bf)
-                if len(actions) == 0 and other_team_actions == 0:
-                    # neither team has actions left
+                this_team_action = self.do_team_action(t)
+                if this_team_action is None and other_team_action is None:
                     turn_finished = True
                     break
-                other_team_actions = len(actions)
-
-                if len(actions) > 0:
-                    self.logger.trace(f'Turn {turn_i} team {t} actions {len(actions)}')
-                    action = self.teams[t].AI.select_action(actions)
-                    self.teams[t^1].AI.take_enemy_action(action)
-                    action.engage()
+                other_team_action = this_team_action
 
                 # save current state
                 for model in self.teams[t].models:

@@ -17,7 +17,7 @@ weps = [
         ('1a9043', 'rifle', 'Rifle', 12, 2, 2, 2, 4),
         ('31dc11', 'mg', 'MG', 12, 4, 2, 3, 5),
         ('3c7434', 'smg', 'SMG', 8, 3, 0, 2, 3),
-        ('06eba5', 'shotgun', 'Shotgun', 6, 3, 1, 2, 4),
+        ('06eba5', 'shotgun', 'Shotgun', 6, 3, 1, 4, 6),
         ('89a4b9', 'pistol', 'Pistol', 6, 1, 0, 1, 3),
         ('f00cd8', 'sniper', 'Sniper', 12, 1, 6, 3, 5),
         ('08e894', 'knife', 'Knife', 0, 1, 0, 2, 4),
@@ -48,7 +48,7 @@ def setup_models():
                 random.randint(50,75), # ms
                 random.randint(10,25), # mc
                 random.randint(4,8), # max health
-                random.randint(50,75), # dodge
+                random.randint(40,60), # dodge
                 random.randint(1,4) # armor
                 )
     mods = [
