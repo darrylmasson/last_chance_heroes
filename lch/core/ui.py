@@ -4,6 +4,8 @@ from tkinter import ttk
 import time
 
 
+__all__ = 'UI'.split()
+
 class UI(lch.Game):
     """
     Now with something resembling a user interface
@@ -80,13 +82,15 @@ class UI(lch.Game):
                 if m.coords == coords:
                     return m
 
-    def top_of_turn(self):
+    def start_of_turn(self, turn_i=None):
         self.clear_visualization()
-        for t in self.teams:
+        for i,t in enumerate(self.teams):
             for m in t:
                 if m.status != 'dead':
                     m.status = 'ready'
                     self.set_square(*m.coords, m)
+                    self.model_disp[i][m.game_hash]['status'].set(m.status)
+                    self.model_disp[i][m.game_hash]['health'].set(m.health)
 
     def double_click(self, event):
         coords = self.px_to_bf((event.x, event.y))
@@ -126,16 +130,29 @@ class UI(lch.Game):
         if action is not None:
             self.engage_action(action)
             self.set_square(*action.model.coords, action.model)
-            if action.target is not None:
-                self.enemy_list[action.target.game_hash] = action.target.text_status()
             self.clear_visualization()
             if (a := self.do_team_action(1)) is not None:
-                if a.target is not None:
-                    self.friendly_list[action.target.game_hash] = a.target.text_status()
-            self.friendly_sv.set(list(self.friendly_list.values()))
-            self.friendly_models['width'] = max(len(s) for s in self.friendly_list.values())
-            self.enemy_sv.set(list(self.enemy_list.values()))
-            self.enemy_models['width'] = max(len(s) for s in self.enemy_list.values())
+                d = self.model_disp[1][a.model.game_hash]
+                d['status'].set(a.model.status)
+                d['health'].set(a.model.health)
+                self.set_square(*a.model.coords, a.model)
+
+                if (t := a.target) is not None:
+                    d = self.model_disp[0][t.game_hash]
+                    d['status'].set(t.status)
+                    d['health'].set(t.health)
+                    self.set_square(*t.coords, t)
+
+            d = self.model_disp[0][action.model.game_hash]
+            d['status'].set(action.model.status)
+            d['health'].set(action.model.health)
+            self.set_square(*action.model.coords, action.model)
+
+            if (t := action.target) is not None:
+                d = self.model_disp[1][t.game_hash]
+                d['status'].set(t.status)
+                d['health'].set(t.health)
+                self.set_square(*t.coords, t)
 
     def shoot_action(self, action):
         print('Shooting action')
@@ -157,7 +174,6 @@ class UI(lch.Game):
 
     def single_click(self, event):
         coords = self.px_to_bf((event.x, event.y))
-        print(coords)
 
         if coords in self.teams[0].coordinates():
             self.clear_visualization()
@@ -169,6 +185,22 @@ class UI(lch.Game):
             self.draw_los(m.coords)
         elif coords in self.teams[1].coordinates():
             self.selected_enemy = self.coords_to_model(coords)
+            if self.selected_model is not None:
+                se = self.selected_enemy
+                sm = self.selected_model
+                coords = self.selected_square or sm.coords
+                moved = coords != sm.coords
+                kw = {'model': sm, 'target': se, 'bf': self.bf}
+                if moved:
+                    kw['move_dest'] = self.selected_square
+                if coords in self.bf.adjacent(se.coords):
+                    how = "in melee"
+                    c = lch.MeleeAction if not moved else lch.ChargeAction
+                else:
+                    how = "at range"
+                    c = lch.ShootAction if not moved else lch.SnapShotAction
+                s = f'Chance for {sm.name} to hit {se.name} {how}: {c(**kw).hit_prob*100:.1f}'
+                self.text_log.set(s)
         elif coords in self.highlighted_squares:
             self.draw_path(self.selected_model, coords)
             self.draw_los(coords)
@@ -236,29 +268,14 @@ class UI(lch.Game):
         x, y = destination
         self.set_square(x, y, model)
 
-    def draw_models(self):
+    def setup_models(self):
         occupied = []
         for i,team in enumerate(self.teams):
             max_l = 0
             for model in team:
-                s = model.text_status()
-                max_l = max(max_l, len(s))
-                if i == 0:
-                    self.friendly_list[model.game_hash] = s
-                else:
-                    self.enemy_list[model.game_hash] = s
-                if model.status == 'dead':
-                    continue
                 x,y = model.coords
                 occupied.append((x,y))
                 self.set_square(x, y, model)
-
-            if i == 0:
-                self.friendly_sv.set(list(self.friendly_list.values()))
-                self.friendly_models['width'] = max_l
-            else:
-                self.enemy_sv.set(list(self.enemy_list.values()))
-                self.enemy_models['width'] = max_l
 
         for x in range(self.bf.size[0]):
             for y in range(self.bf.size[1]):
@@ -280,45 +297,41 @@ class UI(lch.Game):
         csbv['command'] = self.canvas.yview
         csbh['command'] = self.canvas.xview
 
-        action_frame = ttk.Labelframe(frame, text='Possible actions')
-        self.action_list = []
-        self.action_sv = tk.StringVar(value=self.action_list)
-        self.action_lb = tk.Listbox(action_frame, width=0, selectmode='single',
-                height=65, listvariable=self.action_sv)
-        sb = tk.Scrollbar(frame, orient=tk.VERTICAL, command=self.action_lb.yview)
         self.text_log = tk.StringVar()
         self.text_log.set("Info log goes here")
         textlog = ttk.Label(frame, width=120, borderwidth=2, textvariable=self.text_log)
 
-        ff = ttk.Labelframe(frame, text='Friendly models')
-        self.friendly_list = {}
-        self.friendly_sv = tk.StringVar(value=list(self.friendly_list.values()))
-        self.friendly_models = tk.Listbox(ff, height=6, listvariable=self.friendly_sv,
-                selectmode='single')
-        self.enemy_list = {}
-        self.enemy_sv = tk.StringVar(value=list(self.enemy_list.values()))
-        ef = ttk.LabelFrame(frame, text='Enemy models')
-        self.enemy_models = tk.Listbox(ef, height=6, listvariable=self.enemy_sv,
-                selectmode='single')
+        mf = ttk.Frame(frame)
+        fields = 'name status move rs rc ms mc dodge armor health mw rw'.split()
+
+        self.model_disp = [
+                {m.game_hash: {f: tk.StringVar() for f in fields} for m in t }
+                for t in self.teams]
 
         frame.grid(column=0, row=0, sticky='nw se')
-        self.canvas.grid(column=0, row=0, columnspan=2, sticky='nw se')
-        csbv.grid(column=2, row=0, sticky='n e s')
-        csbh.grid(column=0, row=1, columnspan=2, sticky='w s e')
+        self.canvas.grid(column=0, row=0, sticky='nw se')
+        csbv.grid(column=1, row=0, sticky='n e s')
+        csbh.grid(column=0, row=1, sticky='w s e')
 
-        action_frame.grid(column=3, row=0, sticky='n e s', rowspan=2)
-        self.action_lb.grid(column=0, row=0, sticky='nw se')
-        self.action_lb['yscrollcommand'] = sb.set
-        sb.grid(column=4, row=0, rowspan=2, sticky='n s w')
-        textlog.grid(row=1, column=0, columnspan=2, sticky='nw se')
-        ff.grid(row=2, column=0, sticky='nw se')
-        ef.grid(row=2, column=1, columnspan=2, sticky='nw se')
-        self.friendly_models.grid(row=0, column=0)
-        self.enemy_models.grid(row=0, column=0)
+        textlog.grid(row=2, column=0, sticky='nw se')
 
-        self.end_turn_btn = tk.Button(frame, text='End turn',
+        mf.grid(row=3, column=0, sticky='nw se')
+        ff = ttk.LabelFrame(mf, text='Friendlies', borderwidth=1)
+        ef = ttk.LabelFrame(mf, text='Enemies', borderwidth=1)
+        ff.grid(row=0, column=0, sticky='s w n')
+        ef.grid(row=0, column=1, sticky='s e n')
+        for i, f in enumerate(fields):
+            ttk.Label(ff, text=f.capitalize()).grid(row=0, column=i, sticky='n w e', padx=10)
+            ttk.Label(ef, text=f.capitalize()).grid(row=0, column=i, sticky='n w e', padx=10)
+        for h, disp in enumerate(self.model_disp):
+            for i, d in enumerate(disp.values()):
+                for j, sv in enumerate(d.values()):
+                    sv.set(getattr(self.teams[h].models[i], fields[j]))
+                    ttk.Label([ff, ef][h], textvariable=sv).grid(row=i+1, column=j, padx=10, pady=3)
+
+        self.end_turn_btn = tk.Button(frame, text='End\nturn',
                 command=self.end_turn)
-        self.end_turn_btn.grid(row=2, column=3, sticky='w n e')
+        self.end_turn_btn.grid(row=3, column=1, sticky='w n e')
 
         self.root.title('Last Chance Heroes')
         self.root.columnconfigure(0, weight=1)
@@ -331,53 +344,15 @@ class UI(lch.Game):
     def end_turn(self, *args):
         print('Ending turn')
         while self.do_team_action(1):
-            time.sleep(1)
-        return self.top_of_turn()
+            time.sleep(0.5)
+        return self.start_of_turn()
 
     def game_loop(self):
         self.draw_frame()
         self.draw_bf()
-        self.draw_models()
+        self.setup_models()
+        self.start_of_turn()
         self.root.mainloop()
-
-    def generate_actions(self, model):
-        print('Generate actions')
-        actions = model.generate_actions(m.team.coordss(exclude=m), self.teams[1], self.bf)
-        print(f'Got {len(actions)} actions')
-        self.action_list = actions
-        self.action_sv.set(list(map(str, actions)))
-        return
-
-    def preview_action(self, event):
-        if len(idx) == 1:
-            idx = int(idx[0])
-        else:
-            return
-        self.action_lb.see(idx)
-        action = self.action_list[idx]
-        if isinstance(action, lch.MoveAction):
-            p, _ = self.bf.astar_path(action.model.coords, action.move_dest)
-            for i, a in enumerate(p[:-1]):
-                b = p[i+1]
-                x = self.canvas.create_line(
-                        *self.bf_to_px(a),
-                        *self.bf_to_px(b),
-                        dash='4 4',
-                        fill='black', tags='path_vis')
-                self.last_action_vis.append(x)
-            enemies = [t for t in self.teams if t != action.model.team][0]
-            for e in enemies:
-                if e.status == 'dead':
-                    continue
-                a, b = action.move_dest, e.coords
-                x = self.canvas.create_line(*self.bf_to_px(a), *self.bf_to_px(a),
-                        dash='2 2',
-                        fill='black' if self.bf.los_range(a,b)[1] == 0 else 'orange',
-                        tags='path_vis')
-                self.last_action_vis.append(x)
-        if isinstance(action, lch.AttackAction):
-            pass
-
 
 if __name__ == '__main__':
     teams = ['8f74e6', '8f0bbc']

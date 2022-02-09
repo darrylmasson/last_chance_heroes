@@ -2,7 +2,7 @@ import lch
 from math import sqrt
 from scipy.stats import norm
 
-__all__ = 'Action NoAction MoveAction AttackAction MeleeAction ShootAction SnapShotAction ChargeAction'.split()
+__all__ = 'chance_to_hit_ranged chance_to_hit_melee Action NoAction MoveAction AttackAction MeleeAction ShootAction SnapShotAction ChargeAction'.split()
 
 def chance_to_hit_ranged(attacker, defender, obstruction=0, move_dist=0, shot_dist=0):
     """
@@ -148,13 +148,13 @@ class AttackAction(Action):
         return 0
 
 class ShootAction(AttackAction):
-    def chance_to_hit(self, *args):
-        self.hit_prob = chance_to_hit_ranged(self.model, self.target,
+    def chance_to_hit(self):
+        return chance_to_hit_ranged(self.model, self.target,
                 self.obstruction, self.move_dist, self.shot_dist)
 
 class MeleeAction(AttackAction):
     def chance_to_hit(self):
-        self.hit_prob = chance_to_hit_melee(self.model, self.target, isinstance(self, MoveAction))
+        return chance_to_hit_melee(self.model, self.target, isinstance(self, MoveAction))
 
 class SnapShotAction(MoveAction, ShootAction):
     pass

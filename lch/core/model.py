@@ -1,4 +1,6 @@
 import lch
+from random import randint
+
 
 NoRangedWeaponHash = 'bb5d1b'
 
@@ -84,6 +86,23 @@ class Model(object):
         _hash, move, rs, rc, ms, mc, max_health, dodge, armor = args
         return cls(_hash=_hash, move=move, rs=rs, ms=ms, rc=rc, mc=mc,
                 max_health=max_health, dodge=dodge, armor=armor)
+
+    @classmethod
+    def random_new(cls):
+        return cls(
+                move = randint(4,7),
+                rs = randint(50,75),
+                rc = randint(10,25),
+                ms = randint(50,75),
+                mc = randint(10,25),
+                max_health = randint(5,8),
+                dodge = randint(40,60),
+                armor = randint(1,4)
+                )
+
+    @property
+    def health(self):
+        return f'{self.current_health}/{self.max_health}'
 
     def get_snapshot(self):
         return (self.game_hash, self.current_health, self.status, *self.coords)
